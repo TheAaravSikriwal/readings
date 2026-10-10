@@ -54,6 +54,12 @@ const savedPaper = (): Paper => {
   return pref.get('invert') === '1' ? 'dark' : 'white';
 };
 
+/** A zoom kept from last time (the normal view's, or focus mode's). */
+const savedZoom = (key: string) => {
+  const z = Number(pref.get(key));
+  return z >= 0.5 && z <= 3 ? z : 1;
+};
+
 /** Overlap kept between "pages" of a web article, so you don't lose your line. */
 const WEB_OVERLAP = 56;
 
@@ -95,7 +101,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
   const [fresh, setFresh] = useState<string | null>(null);
   const [pop, setPop] = useState<{ id: string; x: number; y: number } | null>(null);
   const [jump, setJump] = useState<{ id: string; n: number } | null>(null);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(() => savedZoom('zoom'));
   const [paper, setPaper] = useState<Paper>(savedPaper);
   const [idle, setIdle] = useState(false);
   const [focus, setFocus] = useState(false);
@@ -252,14 +258,73 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
     (document.activeElement as HTMLElement | null)?.blur(); // so the header can slide away
     if (!focus) {
       setFocus(true);
-      setZoom(1);
       await root.current?.requestFullscreen?.().catch(() => {});
     } else {
       setFocus(false);
-      setZoom(1);
       if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
     }
   }, [focus]);
+
+  // ---- zoom: focus mode and the normal view each keep their own, between visits too
+
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
+  const otherZoom = useRef(savedZoom('zoom-focus'));
+  const firstFocus = useRef(true);
+  useEffect(() => {
+    if (firstFocus.current) return void (firstFocus.current = false);
+    // Into focus mode: its own zoom. Out again: the zoom you had before.
+    const was = zoomRef.current;
+    setZoom(otherZoom.current);
+    otherZoom.current = was;
+  }, [focus]);
+
+  /** Where to hold still while zooming: the point under the pointer, or the middle of the view. */
+  const zoomAnchor = useRef<{ fx: number; fy: number; px: number; py: number } | null>(null);
+  const zoomTo = useCallback((z: number, at?: { x: number; y: number }) => {
+    const next = Math.round(Math.min(3, Math.max(0.5, z)) * 100) / 100;
+    if (next === zoomRef.current) return;
+    const sc = scroller.current;
+    if (sc) {
+      const r = sc.getBoundingClientRect();
+      const px = (at?.x ?? r.left + r.width / 2) - r.left;
+      const py = (at?.y ?? r.top + r.height * 0.4) - r.top;
+      zoomAnchor.current = {
+        fx: (sc.scrollLeft + px) / Math.max(1, sc.scrollWidth),
+        fy: (sc.scrollTop + py) / Math.max(1, sc.scrollHeight),
+        px,
+        py,
+      };
+    }
+    setZoom(next);
+    pref.set(focusRef.current ? 'zoom-focus' : 'zoom', String(next));
+  }, []);
+  useLayoutEffect(() => {
+    const a = zoomAnchor.current;
+    const sc = scroller.current;
+    zoomAnchor.current = null;
+    if (!a || !sc) return;
+    sc.scrollTop = a.fy * sc.scrollHeight - a.py;
+    sc.scrollLeft = a.fx * sc.scrollWidth - a.px;
+  }, [zoom]);
+
+  // Ctrl + scroll (or a trackpad pinch) zooms the page, not the whole browser.
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const wheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      if (!kind) return;
+      const over = scroller.current?.contains(e.target as Node);
+      const step = e.deltaMode === 1 ? 0.05 : e.deltaMode === 2 ? 1 : 0.0018;
+      zoomTo(zoomRef.current * Math.exp(-e.deltaY * step), over ? { x: e.clientX, y: e.clientY } : undefined);
+    };
+    el.addEventListener('wheel', wheel, { passive: false });
+    return () => el.removeEventListener('wheel', wheel);
+  }, [kind, zoomTo]);
 
   useEffect(() => {
     const onFs = () => !document.fullscreenElement && setFocus(false);
@@ -422,6 +487,8 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input, textarea, select')) return;
+      // With Ctrl (or Cmd) only the zoom keys are ours; Ctrl+F, Ctrl+W and the rest stay the browser's.
+      if ((e.ctrlKey || e.metaKey) && !['=', '+', '-', '_', '0'].includes(e.key)) return;
       if (e.key === 'Escape') return focus ? toggleFocus() : onClose();
       if (e.key === 'ArrowRight' || e.key === 'PageDown') (e.preventDefault(), goTo(current() + 1));
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') (e.preventDefault(), goTo(current() - 1));
@@ -434,8 +501,10 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
         e.preventDefault(); // or the b lands in the label box that opens
         placeBookmark();
       }
-      if (kind === 'pdf' && (e.key === '=' || e.key === '+')) setZoom((z) => Math.min(2.5, z + 0.15));
-      if (kind === 'pdf' && e.key === '-') setZoom((z) => Math.max(0.5, z - 0.15));
+      // + and - zoom the page; with Ctrl too, instead of the browser. Ctrl+0 back to 100%.
+      if (kind && (e.key === '=' || e.key === '+')) (e.preventDefault(), zoomTo(zoomRef.current + 0.15));
+      if (kind && (e.key === '-' || e.key === '_')) (e.preventDefault(), zoomTo(zoomRef.current - 0.15));
+      if (kind && e.key === '0' && (e.ctrlKey || e.metaKey)) (e.preventDefault(), zoomTo(1));
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -619,14 +688,16 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
               </button>
             </span>
           )}
-          {kind === 'pdf' && (
+          {kind && (
             <>
               <span className="tool-sep" />
-              <button className="ghost" onClick={() => setZoom((z) => Math.max(0.5, z - 0.15))} aria-label="Zoom out">
+              <button className="ghost" onClick={() => zoomTo(zoom - 0.15)} aria-label="Zoom out" title="Zoom out (−, or Ctrl + scroll)">
                 −
               </button>
-              <span className="faint mono">{Math.round(zoom * 100)}%</span>
-              <button className="ghost" onClick={() => setZoom((z) => Math.min(2.5, z + 0.15))} aria-label="Zoom in">
+              <button className="ghost mono zoom-pct" onClick={() => zoomTo(1)} title="Back to 100% (Ctrl+0)">
+                {Math.round(zoom * 100)}%
+              </button>
+              <button className="ghost" onClick={() => zoomTo(zoom + 0.15)} aria-label="Zoom in" title="Zoom in (+, or Ctrl + scroll)">
                 +
               </button>
             </>
@@ -688,7 +759,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
           <Contents sections={sections} known={outlineKnown} cur={cur} counts={secCounts} onGo={goToSection} onClose={toggleToc} />
         )}
         {!notesOnly && (
-          <main className="r-doc" ref={scroller} onClick={turn}>
+          <main className="r-doc" ref={scroller} onClick={turn} style={{ '--doc-zoom': zoom } as React.CSSProperties}>
             {marksInOrder.length > 0 && (
               <div className="bm-layer">
                 {marksInOrder.map((b) => {

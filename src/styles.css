@@ -3396,3 +3396,21 @@ mark.hl.note.q {
 .np-actions .np-hint {
   min-width: 0;
 }
+
+/* --------------------------------------------------------------- zoom */
+
+/* A saved web page zooms by its type size and measure, so lines stay the same length. */
+.r-doc .snapshot {
+  font-size: calc(19px * var(--doc-zoom, 1));
+  max-width: calc(760px * var(--doc-zoom, 1));
+}
+.reader.focus .r-doc .snapshot {
+  font-size: calc(21px * var(--doc-zoom, 1));
+  max-width: calc(820px * var(--doc-zoom, 1));
+}
+.zoom-pct {
+  min-width: 40px;
+  padding: 6px 2px;
+  font-size: 11px;
+  color: var(--faint);
+}

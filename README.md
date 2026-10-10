@@ -48,6 +48,7 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 | `[` `]` | previous / next heading |
 | **focus** (`F`) | full screen, just the page, no edges. Click left/right of it to turn the page |
 | **paper** (`W`) | page colour: white, warm or dark |
+| `Ctrl` + scroll (or pinch), `+` `-`, `Ctrl+0` | zoom the page, not the browser, around the spot under the pointer. The normal view and focus mode each keep their own zoom |
 | **export** | this article's summary and notes as Markdown |
 
 After any mark the box opens ready to type: Enter finishes, so you rarely need the mouse.
