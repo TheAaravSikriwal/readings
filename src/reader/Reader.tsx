@@ -57,12 +57,15 @@ const savedPaper = (): Paper => {
 
 /** Headings in document order. */
 const ordered = (ss: Section[]) =>
-  [...ss].sort((x, y) => (x.p ?? 0) - (y.p ?? 0) || (x.y ?? 0) - (y.y ?? 0) || (x.at ?? 0) - (y.at ?? 0));
+  [...ss].sort(
+    (x, y) => (x.p ?? 0) - (y.p ?? 0) || (x.c ?? 0) - (y.c ?? 0) || (x.y ?? 0) - (y.y ?? 0) || (x.at ?? 0) - (y.at ?? 0),
+  );
 
 /** Whether a heading comes at or before a place in the document. */
-const before = (s: Section, spot: Pick<Section, 'p' | 'y' | 'at'>) =>
+const before = (s: Section, spot: Pick<Section, 'p' | 'y' | 'at' | 'c'>) =>
   s.p !== undefined && spot.p !== undefined
-    ? s.p < spot.p || (s.p === spot.p && (s.y ?? 0) <= (spot.y ?? 0))
+    ? s.p < spot.p ||
+      (s.p === spot.p && ((s.c ?? 0) < (spot.c ?? 0) || ((s.c ?? 0) === (spot.c ?? 0) && (s.y ?? 0) <= (spot.y ?? 0))))
     : (s.at ?? 0) <= (spot.at ?? 0);
 
 /** How far down a web page a character is, in px from the page's top. */
@@ -192,7 +195,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
   const editSections = useCallback((next: Section[]) => actions.editOutline(id, { v: OUTLINE_V, sections: ordered(next) }), [id]);
 
   /** A new heading at a place in the document, at the level of the one above it. Returns where it landed. */
-  const addHeading = (spot: Pick<Section, 'p' | 'y' | 'at'>, title: string) => {
+  const addHeading = (spot: Pick<Section, 'p' | 'y' | 'at' | 'c'>, title: string) => {
     const above = sections.filter((x) => before(x, spot)).at(-1);
     const s: Section = { title, level: above?.level ?? 1, ...spot };
     const next = ordered([...sections, s]);
@@ -629,7 +632,9 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
     (h: Omit<Highlight, 'id' | 'created' | 'note'>, mode: MarkMode, x: number, y: number) => {
       if (mode === 'heading') {
         const r = h.rects?.[0];
-        addHeading(r ? { p: r.p, y: r.y } : { at: h.start ?? 0 }, h.text.slice(0, 140));
+        // On a two-column page, the heading knows its column.
+        const twoCol = !!r && sections.some((s) => s.p === r.p && s.c !== undefined);
+        addHeading(r ? { p: r.p, y: r.y, ...(twoCol ? { c: r.x >= 0.45 ? 1 : 0 } : {}) } : { at: h.start ?? 0 }, h.text.slice(0, 140));
         setTocOpen(true);
         pref.set('toc', '1');
         actions.toast(`“${h.text.length > 60 ? `${h.text.slice(0, 60)}…` : h.text}” is in the contents now`);

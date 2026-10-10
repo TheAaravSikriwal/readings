@@ -69,8 +69,11 @@ Glossary and references each hide with ×, and come back from their tab.
 
 Inside a reading, its own bookmarks, terms and references sit at the top of the side panel;
 each section folds away. Headings are found when a reading is first opened: a PDF's own
-bookmarks if it has them, otherwise read off the text (bigger type, numbered titles like
-"6. Contrary Views…" or "(1) The Theological Objection", short lines standing on their own); a
+bookmarks if it has them, otherwise read off the text: bigger type, numbered titles like
+"6. Contrary Views…" or "(1) The Theological Objection", headings that start a paragraph
+("I. The systems reply (Berkeley). …"), "by Name" bylines with their titles (a journal's
+commentaries, a collection's chapters), and the usual named parts (Notes, References…). Two-column
+pages are read column by column, and running heads are ignored, even misspelled by a scan; a
 saved web page's heading tags. Notes then sit in folders, one per heading (empty ones too, for getting around), each of which
 folds away; click a folder's name to go to that heading. References keep a list of their own, in
 the order the paper cites them: click one to go to where it's cited. Exports group quotes the

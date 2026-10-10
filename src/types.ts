@@ -55,6 +55,8 @@ export interface Section {
   /** PDF: the page (from 0) and how far down it, 0 to 1 */
   p?: number;
   y?: number;
+  /** On a two-column page: which column (0 left, 1 right). Unset on one-column pages. */
+  c?: number;
   /** Web page: which heading tag (in order) and where it starts in the text */
   i?: number;
   at?: number;

@@ -13,8 +13,13 @@ export function sectionIndex(h: Highlight, sections: Section[]): number | null {
   const r = h.rects?.[0];
   let k = -1;
   if (r) {
+    // A page whose headings know their column is a two-column page: left column, then right.
+    const twoCol = sections.some((s) => s.p === r.p && s.c !== undefined);
+    const col = twoCol && r.x >= 0.45 ? 1 : 0;
     sections.forEach((s, i) => {
-      if (s.p !== undefined && (s.p < r.p || (s.p === r.p && (s.y ?? 0) <= r.y + 0.01))) k = i;
+      if (s.p === undefined) return;
+      const sc = s.c ?? 0;
+      if (s.p < r.p || (s.p === r.p && (sc < col || (sc === col && (s.y ?? 0) <= r.y + 0.01)))) k = i;
     });
     return k;
   }
