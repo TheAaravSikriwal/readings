@@ -3414,3 +3414,13 @@ mark.hl.note.q {
   font-size: 11px;
   color: var(--faint);
 }
+
+/* The folder arrows: no box around them after a click, only when tabbed to. */
+.ly-caret:focus {
+  outline: none;
+}
+.ly-caret:focus-visible {
+  outline: 1px solid var(--dim);
+  outline-offset: 1px;
+  border-radius: 3px;
+}

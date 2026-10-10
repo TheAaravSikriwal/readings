@@ -12,6 +12,7 @@ import {
   isDefinition,
   isQuestion,
   isReference,
+  readingOrder,
   referenceList,
   scholarUrl,
   sectionIndex,
@@ -115,6 +116,11 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
   const sorted = useMemo(() => sortNotes(highlights.filter((h) => !isDefinition(h) && !isReference(h))), [highlights]);
   const terms = useMemo(() => (a ? glossary(lib, a.id) : []), [lib, a, highlights]); // eslint-disable-line react-hooks/exhaustive-deps
   const refs = useMemo(() => (a ? referenceList(lib, a.id) : []), [lib, a, highlights]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** This reading's references in the order the paper cites them. */
+  const refsInOrder = useMemo(() => {
+    const at = new Map(highlights.map((h) => [h.id, readingOrder(h)]));
+    return [...refs].sort((x, y) => (at.get(x.sources[0].highlightId) ?? 0) - (at.get(y.sources[0].highlightId) ?? 0));
+  }, [refs, highlights]);
   const [openTerm, setOpenTerm] = useState<string | null>(null);
   const bookmarks = useMemo(() => a?.bookmarks ?? [], [a?.bookmarks]);
   const [bmPop, setBmPop] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -946,7 +952,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
               </button>
               {!fold.refs &&
                 (refs.length ? (
-                  foldered(refs, 'r', (r) => secOf.get(r.sources[0].highlightId), (r) => {
+                  refsInOrder.map((r) => {
                     const src = r.sources[0];
                     const link = citeLink(r.cite);
                     const note = r.sources.map((x) => x.note).filter(Boolean).join(' ');
@@ -954,17 +960,25 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
                       <div key={r.key} data-h={src.highlightId} className={`ref-item ${active === src.highlightId ? 'on' : ''}`}>
                         <button
                           className="ref-cite"
-                          onClick={(e) => {
+                          onClick={() => {
                             setActive(src.highlightId);
                             setJump({ id: src.highlightId, n: Date.now() });
-                            if (EDITABLE) setPop({ id: src.highlightId, x: e.clientX - 320, y: e.clientY - 10 });
                           }}
+                          title="Go to where the paper cites it"
                         >
                           {r.cite}
                         </button>
                         {note && <p className="ref-note">{note}</p>}
                         <div className="ref-actions">
                           {src.page !== undefined && <span className="faint">p. {src.page + 1}</span>}
+                          {EDITABLE && (
+                            <button
+                              className="ghost tiny"
+                              onClick={(e) => setPop({ id: src.highlightId, x: e.clientX - 320, y: e.clientY - 10 })}
+                            >
+                              edit
+                            </button>
+                          )}
                           {r.onMap ? (
                             <button className="ghost tiny" onClick={() => onOpenReading?.(r.onMap!)}>
                               on the map →
