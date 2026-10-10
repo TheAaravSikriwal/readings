@@ -83,14 +83,20 @@ export function NotePop({ h, x, y, editable, onChange, onTerm, onRemove, onClose
           value={h.note}
           onChange={onChange}
           onDone={onClose}
-          placeholder={isDef ? 'What it means…' : 'Write a note about this line…'}
+          placeholder={
+            isDef ? 'What it means…' : h.kind === 'note' ? 'Write a note about this line…' : 'Add a note, or just press Enter…'
+          }
         />
         </div>
       ) : (
         <p className="np-note">{h.note || <span className="faint">No note, just highlighted.</span>}</p>
       )}
       <div className="np-actions">
-        {editable && <span className="np-hint faint">enter to finish · shift+enter for a new line</span>}
+        {editable && (
+          <span className="np-hint faint">
+            {isDef && !h.term ? 'enter to go to the definition' : 'enter to finish · shift+enter for a new line'}
+          </span>
+        )}
         {editable && (
           <button className="ghost tiny" onClick={onRemove}>
             remove

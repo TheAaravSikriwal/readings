@@ -230,7 +230,9 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
             : h,
       );
       setActive(hid);
-      if (mode !== 'highlight') setPop({ id: hid, x, y });
+      // Every kind opens its box ready to type: a highlight's note is optional,
+      // and Enter (or Esc) finishes, so the hands can stay on the keyboard.
+      setPop({ id: hid, x, y });
     },
     [id],
   );
