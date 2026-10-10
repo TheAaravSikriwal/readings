@@ -81,6 +81,13 @@ const smooth = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
+/** How far a bubble's connections pull it from its parent toward the middle
+ * of what it is connected to: 10% per connection, so five put it halfway,
+ * then 3% more for each one after that, stopping at 65%. Its parent always
+ * keeps the larger share. */
+export const pullShare = (connections: number) =>
+  connections <= 5 ? 0.1 * connections : Math.min(0.65, 0.5 + 0.03 * (connections - 5));
+
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
 export class MapView {
@@ -99,6 +106,8 @@ export class MapView {
   private parentOf = new Map<string, string>();
   private kids = new Map<string, string[]>();
   private neighbors = new Map<string, Set<string>>();
+  /* Each bubble's connections other than its own parent: what pulls it off its parent. */
+  private pulls = new Map<string, string[]>();
 
   private focus = ROOT;
   private selected: string | null = null;
@@ -110,7 +119,24 @@ export class MapView {
   private offset = { x: 0, y: 0 };
   private offsetT = { x: 0, y: 0 };
   private lastClick = { id: '', t: 0 };
+  /* Our own click and hover handling (see listen()). */
+  private press: { x: number; y: number; t: number; button: number } | null = null;
+  private rightMoved = false;
+  private pointer = { x: 0, y: 0, inside: false };
+  private hoverDirty = false;
+  /* Our own camera flights, so touching the map can cancel one mid-air. */
+  private flight: {
+    p0: THREE.Vector3;
+    t0: THREE.Vector3;
+    p1: THREE.Vector3;
+    t1: THREE.Vector3;
+    start: number;
+    dur: number;
+  } | null = null;
   private lastInput = performance.now();
+  /* Moving the mouse over the map pauses the idle drift, so a bubble you're
+   * aiming at doesn't slide away. */
+  private lastPointer = 0;
   private lastFrame = 0;
   private framedOnce = false;
   private introUntil = 0;
@@ -121,6 +147,8 @@ export class MapView {
   constructor(private el: HTMLElement, private cb: MapCallbacks, editable: boolean) {
     const labels = new CSS2DRenderer();
     labels.domElement.className = 'labels';
+    // Re-sorting every label's z-index every frame was most of the map's lag.
+    labels.sortObjects = false;
 
     this.g = new ForceGraph3D(el, { controlType: 'orbit', extraRenderers: [labels as any] }) as unknown as ForceGraph3DInstance<GNode, GLink>;
     this.camera = this.g.camera() as THREE.PerspectiveCamera;
@@ -149,17 +177,7 @@ export class MapView {
       .d3AlphaDecay(0.022)
       .d3VelocityDecay(0.32)
       .cooldownTime(9000)
-      .onNodeClick((n: GNode, ev: MouseEvent) => this.handleClick(n, ev))
-      .onNodeRightClick((n: GNode, ev: MouseEvent) => n.kind !== 'root' && cb.onRightClick(n.id, ev))
-      .onNodeHover((n: GNode | null) => {
-        const id = n && n.kind !== 'root' ? n.id : null;
-        el.style.cursor = id ? 'pointer' : '';
-        if (id !== this.hover) {
-          this.hover = id;
-          this.retarget();
-        }
-      })
-      .onBackgroundClick(() => cb.onBackground())
+      .showPointerCursor(false)
       .onEngineStop(() => this.lastInput < this.lastFrame && this.frame(1400))
       .onNodeDrag((n: GNode) => {
         this.dragging = n.id;
@@ -180,7 +198,12 @@ export class MapView {
     // Forces: topics push apart, articles orbit their topic, cross-links pull gently.
     (this.g.d3Force('link') as any)
       .distance((l: GLink) => this.linkDistance(l))
-      .strength((l: GLink) => (l.kind === 'cross' ? 0.015 : l.kind === 'root' ? 0.3 : 0.7));
+      .strength((l: GLink) => {
+        if (l.kind === 'cross') return 0;
+        const pulled = (this.pulls.get(end(l.target))?.length ?? 0) > 0;
+        return pulled ? 0.01 : l.kind === 'root' ? 0.3 : 0.7;
+      });
+    this.g.d3Force('pull', this.pullForce() as any);
     // Main topics push each other far apart, so each reads as its own cluster.
     (this.g.d3Force('charge') as any)
       .strength((n: GNode) =>
@@ -191,9 +214,12 @@ export class MapView {
 
     Object.assign(this.controls, {
       enableDamping: true,
-      dampingFactor: 0.08,
-      rotateSpeed: 0.55,
-      zoomSpeed: 0.9,
+      dampingFactor: 0.14,
+      rotateSpeed: 0.7,
+      zoomSpeed: 1.15,
+      // Scroll zooms toward whatever is under the pointer, not the middle of the screen.
+      zoomToCursor: true,
+      minDistance: 6,
       maxDistance: 5000,
       autoRotateSpeed: 0,
     });
@@ -208,10 +234,7 @@ export class MapView {
     this.camera.far = 20000;
     this.g.cameraPosition({ x: 0, y: 40, z: 900 });
 
-    const poke = () => (this.lastInput = performance.now());
-    // Only touching the map counts; typing in a panel shouldn't stop the camera re-centering.
-    el.addEventListener('pointerdown', poke);
-    el.addEventListener('wheel', poke, { passive: true });
+    this.listen();
 
     this.ro = new ResizeObserver(() => this.g.width(el.clientWidth).height(el.clientHeight));
     this.ro.observe(el);
@@ -321,6 +344,9 @@ export class MapView {
     this.parentOf = parentOf;
     this.kids = kids;
     this.neighbors = neighbors;
+    this.pulls = new Map(
+      [...neighbors].map(([id, set]) => [id, [...set].filter((o) => o !== parentOf.get(id))] as [string, string[]]),
+    );
 
     const sig =
       next.map((n) => n.id).join(',') +
@@ -372,7 +398,7 @@ export class MapView {
     }
   }
 
-  frame(ms = 1100) {
+  frame(ms = 700) {
     this.lastFrame = performance.now();
     if (this.selected && this.nodes.has(this.selected)) {
       const around = [...(this.neighbors.get(this.selected) ?? [])].map((id) => this.nodes.get(id)!);
@@ -393,16 +419,132 @@ export class MapView {
 
   // ---------------------------------------------------------------- internals
 
-  private handleClick(n: GNode, ev: MouseEvent) {
-    if (n.kind === 'root') return;
-    const t = performance.now();
-    if (this.lastClick.id === n.id && t - this.lastClick.t < 340) {
-      this.lastClick = { id: '', t: 0 };
-      this.cb.onDblClick(n.id);
-    } else {
-      this.lastClick = { id: n.id, t };
-      this.cb.onClick(n.id, ev);
+  /** Clicks, right-clicks and hover, handled here rather than by 3d-force-graph:
+   * a press that moves under 6px is a click, and what it hit is worked out
+   * right then from where the bubbles are on screen. */
+  private listen() {
+    const el = this.el;
+    // Touching the map stops any flight and counts as input; typing in a panel doesn't.
+    const touch = () => {
+      this.lastInput = performance.now();
+      this.flight = null;
+    };
+    el.addEventListener('pointerdown', (e) => {
+      touch();
+      this.press = { x: e.clientX, y: e.clientY, t: performance.now(), button: e.button };
+    });
+    el.addEventListener('wheel', touch, { passive: true });
+    el.addEventListener('pointerup', (e) => {
+      const p = this.press;
+      this.press = null;
+      this.hoverDirty = true;
+      if (!p || p.button !== e.button) return;
+      const moved = Math.hypot(e.clientX - p.x, e.clientY - p.y) > 6;
+      if (e.button === 2) this.rightMoved = moved;
+      if (e.button !== 0 || moved || performance.now() - p.t > 800) return;
+      const id = this.pick(e.clientX, e.clientY);
+      if (id) this.handleClick(id, e);
+      else this.cb.onBackground();
+    });
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (this.rightMoved) return (this.rightMoved = false); // that was a pan
+      const id = this.pick(e.clientX, e.clientY);
+      if (id) this.cb.onRightClick(id, e);
+    });
+    el.addEventListener('pointermove', (e) => {
+      this.lastPointer = performance.now();
+      this.pointer = { x: e.clientX, y: e.clientY, inside: true };
+      this.hoverDirty = true;
+    });
+    el.addEventListener('pointerleave', () => {
+      this.pointer.inside = false;
+      this.hoverDirty = true;
+    });
+  }
+
+  /** The bubble under a screen point. Pearls win over the glass bubbles around
+   * them; small or far ones get a few pixels of slack so they can still be hit. */
+  private pick(clientX: number, clientY: number): string | null {
+    const rect = this.el.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const k = rect.height / 2 / Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
+    const at = new THREE.Vector3();
+    let best: string | null = null;
+    let bestScore = Infinity;
+    for (const n of this.nodes.values()) {
+      const v = n.v;
+      if (!v || n.kind === 'root') continue;
+      v.mesh.getWorldPosition(at);
+      const dist = at.distanceTo(this.camera.position);
+      at.project(this.camera);
+      if (at.z < -1 || at.z > 1) continue;
+      const sx = ((at.x + 1) / 2) * rect.width;
+      const sy = ((1 - at.y) / 2) * rect.height;
+      const radius = ((n.r * Math.max(v.s, 0.2)) / Math.max(dist, 1)) * k;
+      const reach = Math.max(radius * 1.08, n.kind === 'article' ? 11 : 9);
+      if (Math.hypot(sx - px, sy - py) > reach) continue;
+      const score = (n.kind === 'article' ? 0 : 1e7) + dist;
+      if (score < bestScore) {
+        best = n.id;
+        bestScore = score;
+      }
     }
+    return best;
+  }
+
+  private handleClick(id: string, ev: MouseEvent) {
+    const t = performance.now();
+    if (this.lastClick.id === id && t - this.lastClick.t < 340) {
+      this.lastClick = { id: '', t: 0 };
+      this.cb.onDblClick(id);
+    } else {
+      this.lastClick = { id, t };
+      this.cb.onClick(id, ev);
+    }
+  }
+
+  /** Pulls each connected bubble toward the point a pullShare() of the way
+   * from its parent to the middle of what it is connected to. */
+  private pullForce() {
+    let nodes: GNode[] = [];
+    const force = (alpha: number) => {
+      const k = 0.45 * alpha;
+      for (const n of nodes) {
+        const others = this.pulls.get(n.id);
+        if (!others?.length || n.x === undefined) continue;
+        const parent = this.nodes.get(this.parentOf.get(n.id) ?? '') ?? this.root;
+        if (parent.x === undefined) continue;
+        let cx = 0;
+        let cy = 0;
+        let cz = 0;
+        let c = 0;
+        for (const id of others) {
+          const o = this.nodes.get(id);
+          if (o?.x === undefined) continue;
+          cx += o.x;
+          cy += o.y ?? 0;
+          cz += o.z ?? 0;
+          c++;
+        }
+        if (!c) continue;
+        const f = pullShare(c);
+        const py = parent.y ?? 0;
+        const pz = parent.z ?? 0;
+        const tx = parent.x + f * (cx / c - parent.x);
+        const ty = py + f * (cy / c - py);
+        const tz = pz + f * (cz / c - pz);
+        const m = n as GNode & { vx?: number; vy?: number; vz?: number };
+        m.vx = (m.vx ?? 0) + (tx - n.x) * k;
+        m.vy = (m.vy ?? 0) + (ty - (n.y ?? 0)) * k;
+        m.vz = (m.vz ?? 0) + (tz - (n.z ?? 0)) * k;
+      }
+    };
+    force.initialize = (ns: GNode[]) => {
+      nodes = ns;
+    };
+    return force;
   }
 
   private linkDistance(l: GLink) {
@@ -455,7 +597,14 @@ export class MapView {
     if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
     dir.normalize();
     const pos = c.clone().addScaledVector(dir, dist);
-    this.g.cameraPosition({ x: pos.x, y: pos.y, z: pos.z }, { x: c.x, y: c.y, z: c.z }, ms);
+    this.flight = {
+      p0: this.camera.position.clone(),
+      t0: this.controls.target.clone(),
+      p1: pos,
+      t1: c,
+      start: performance.now(),
+      dur: ms,
+    };
   }
 
   private objectFor(n: GNode): THREE.Object3D {
@@ -574,6 +723,26 @@ export class MapView {
     this.raf = requestAnimationFrame(this.tick);
     if (this.paused) return;
     const time = now / 1000;
+
+    if (this.flight) {
+      const f = this.flight;
+      const k = Math.min(1, (now - f.start) / f.dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      this.camera.position.lerpVectors(f.p0, f.p1, e);
+      this.controls.target.lerpVectors(f.t0, f.t1, e);
+      if (k >= 1) this.flight = null;
+    }
+
+    if (this.hoverDirty && !this.press) {
+      this.hoverDirty = false;
+      const id = this.pointer.inside ? this.pick(this.pointer.x, this.pointer.y) : null;
+      if (id !== this.hover) {
+        this.hover = id;
+        this.el.style.cursor = id ? 'pointer' : '';
+        this.retarget();
+      }
+    }
+
     const camDist = this.camera.position.distanceTo(this.controls.target);
     shared.uFogNear.value = this.fog.near = camDist * 1.3;
     shared.uFogFar.value = this.fog.far = camDist * 3.6;
@@ -603,7 +772,8 @@ export class MapView {
       if (Math.abs(shown - v.labShown) > 0.01) {
         v.labShown = shown;
         v.labelEl.style.opacity = shown.toFixed(2);
-        v.labelEl.style.visibility = shown < 0.02 ? 'hidden' : 'visible';
+        // A hidden label is skipped by the label renderer entirely.
+        v.label.visible = shown >= 0.02;
       }
     }
     for (const l of this.links.values()) {
@@ -626,7 +796,7 @@ export class MapView {
     }
 
     // Drift slowly when nobody's touching anything.
-    const idle = now - this.lastInput > 9000 && !this.selected && !this.dragging;
+    const idle = now - Math.max(this.lastInput, this.lastPointer) > 9000 && !this.selected && !this.dragging;
     this.controls.autoRotateSpeed += ((idle ? 0.3 : 0) - this.controls.autoRotateSpeed) * 0.02;
     this.controls.autoRotate = this.controls.autoRotateSpeed > 0.004;
   };

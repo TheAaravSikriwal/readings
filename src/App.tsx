@@ -161,6 +161,23 @@ export default function App() {
     return () => window.removeEventListener('keydown', key);
   });
 
+  // Ctrl+Z / Ctrl+Shift+Z (Ctrl+Y) undo and redo, everywhere, map or reader.
+  // Inside a text box they're left to the box's own undo.
+  useEffect(() => {
+    if (!EDITABLE) return;
+    const key = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || typing(e.target)) return;
+      const k = e.key.toLowerCase();
+      const redo = (k === 'z' && e.shiftKey) || k === 'y';
+      if (k !== 'z' && !redo) return;
+      e.preventDefault();
+      const done = redo ? actions.redo() : actions.undo();
+      actions.toast(done ? (redo ? 'Redone.' : 'Undone.') : redo ? 'Nothing to redo.' : 'Nothing to undo.');
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, []);
+
   // Paste a link or PDF anywhere to add it to the topic you're in.
   useEffect(() => {
     if (!EDITABLE) return;
@@ -240,21 +257,33 @@ export default function App() {
         shiftY={narrow ? Math.round(window.innerHeight * 0.3) : 0}
         onClick={(id, ev) => {
           setMenu(null);
-          if (ev.shiftKey && EDITABLE && selected && id !== selected) actions.toggleConnection(selected, id);
+          // Shift-click connects from the open reading, or else from the topic you're in.
+          const from = selected ?? focus;
+          if (ev.shiftKey && EDITABLE && from && id !== from) {
+            const had = actions.linkBetween(from, id);
+            actions.toggleConnection(from, id);
+            actions.toast(`${had ? 'Disconnected' : 'Connected'} “${tree.get(from)?.title}” and “${tree.get(id)?.title}”`);
+          }
           else open(id);
         }}
         onDblClick={(id) => tree.article(id) && setReading(id)}
         onRightClick={(id, ev) => EDITABLE && setMenu({ id, x: ev.clientX, y: ev.clientY })}
         onBackground={() => {
-          setMenu(null);
-          setSelected(null);
+          // Empty space backs out one step: the open card first, then the topic you're in.
+          if (menu) return setMenu(null);
+          up();
         }}
         onDrop={(id, into) => {
           if (actions.move(id, into)) actions.toast(`Moved “${tree.get(id)?.title}” into “${into ? tree.get(into)?.title : lib.title}”`);
         }}
       />
 
-      <TopBar focus={focus} onGo={open} onRename={rename} />
+      <TopBar
+        focus={focus}
+        onGo={open}
+        onRename={rename}
+        onConnect={(from) => setPalette({ kind: 'connect', from })}
+      />
 
       {selected && !reading && (
         <Card

@@ -26,6 +26,16 @@ const pref = {
   },
 };
 
+/** The page colour: white, warm (a cream page, brown ink, the room around it
+ * warmed too) or dark. */
+type Paper = 'white' | 'warm' | 'dark';
+const PAPERS: Paper[] = ['white', 'warm', 'dark'];
+const savedPaper = (): Paper => {
+  const p = pref.get('paper');
+  if (p === 'white' || p === 'warm' || p === 'dark') return p;
+  return pref.get('invert') === '1' ? 'dark' : 'white';
+};
+
 /** Overlap kept between "pages" of a web article, so you don't lose your line. */
 const WEB_OVERLAP = 56;
 
@@ -38,7 +48,8 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
   const [pop, setPop] = useState<{ id: string; x: number; y: number } | null>(null);
   const [jump, setJump] = useState<{ id: string; n: number } | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [invert, setInvert] = useState(pref.get('invert') === '1');
+  const [paper, setPaper] = useState<Paper>(savedPaper);
+  const [idle, setIdle] = useState(false);
   const [focus, setFocus] = useState(false);
   const [page, setPage] = useState({ n: 1, total: 1 });
   const root = useRef<HTMLDivElement>(null);
@@ -153,12 +164,33 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
       if (e.key === 'ArrowRight' || e.key === 'PageDown') (e.preventDefault(), goTo(current() + 1));
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') (e.preventDefault(), goTo(current() - 1));
       if (e.key === 'f' || e.key === 'F') toggleFocus();
+      if (e.key === 'w' || e.key === 'W') cyclePaper();
       if (kind === 'pdf' && (e.key === '=' || e.key === '+')) setZoom((z) => Math.min(2.5, z + 0.15));
       if (kind === 'pdf' && e.key === '-') setZoom((z) => Math.max(0.5, z - 0.15));
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [onClose, kind, goTo, page.n, focus, toggleFocus]);
+  }, [onClose, kind, goTo, page.n, focus, toggleFocus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // In focus mode the page counter and the pointer get out of the way when
+  // nothing is moving.
+  useEffect(() => {
+    if (!focus) return setIdle(false);
+    let t = 0;
+    const wake = () => {
+      setIdle(false);
+      clearTimeout(t);
+      t = window.setTimeout(() => setIdle(true), 1600);
+    };
+    wake();
+    window.addEventListener('pointermove', wake);
+    window.addEventListener('keydown', wake);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('pointermove', wake);
+      window.removeEventListener('keydown', wake);
+    };
+  }, [focus]);
 
   // Clicking a highlight in the document brings its card in the side rail into view.
   useEffect(() => {
@@ -191,6 +223,14 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
     setActive(hid);
   };
 
+  function cyclePaper() {
+    setPaper((p) => {
+      const next = PAPERS[(PAPERS.indexOf(p) + 1) % PAPERS.length];
+      pref.set('paper', next);
+      return next;
+    });
+  }
+
   if (!a) return null;
   const busy = pending.has(id);
   const notesOnly = !kind && !EDITABLE;
@@ -206,7 +246,7 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
   return (
     <div
       ref={root}
-      className={`reader ${notesOnly ? 'notes-view' : ''} ${focus ? 'focus' : ''}`}
+      className={`reader paper-${paper} kind-${kind ?? 'none'} ${notesOnly ? 'notes-view' : ''} ${focus ? 'focus' : ''} ${idle ? 'idle' : ''}`}
       onKeyDown={(e) => e.stopPropagation()}
     >
       {focus && <div className="r-peek" />}
@@ -219,8 +259,22 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
           <span className="faint">{[a.authors, a.year].filter(Boolean).join(' · ')}</span>
         </div>
         <div className="r-tools">
+          {kind && (
+            <span className="pager">
+              <button className="ghost" onClick={() => goTo(current() - 1)} disabled={page.n <= 1} aria-label="Previous page">
+                ‹
+              </button>
+              <span className="mono">
+                {page.n} <span className="faint">/ {page.total}</span>
+              </span>
+              <button className="ghost" onClick={() => goTo(current() + 1)} disabled={page.n >= page.total} aria-label="Next page">
+                ›
+              </button>
+            </span>
+          )}
           {kind === 'pdf' && (
             <>
+              <span className="tool-sep" />
               <button className="ghost" onClick={() => setZoom((z) => Math.max(0.5, z - 0.15))} aria-label="Zoom out">
                 −
               </button>
@@ -228,15 +282,14 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
               <button className="ghost" onClick={() => setZoom((z) => Math.min(2.5, z + 0.15))} aria-label="Zoom in">
                 +
               </button>
-              <button
-                className={`ghost ${invert ? 'on' : ''}`}
-                onClick={() => {
-                  pref.set('invert', invert ? '0' : '1');
-                  setInvert(!invert);
-                }}
-                title="Invert pages for dark reading"
-              >
-                ◐
+            </>
+          )}
+          {kind && (
+            <>
+              <span className="tool-sep" />
+              <button className="ghost paper-btn" onClick={cyclePaper} title="Page colour: white, warm or dark (W)">
+                <span className={`paper-dot ${paper}`} />
+                {paper}
               </button>
             </>
           )}
@@ -272,7 +325,6 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
                 active={active}
                 zoom={zoom}
                 fit={focus ? 'page' : 'width'}
-                invert={invert}
                 editable={EDITABLE}
                 jump={jump}
                 onPick={pick}
@@ -392,17 +444,9 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
         </aside>
       </div>
 
-      {kind && (
-        <div className="pager" onClick={(e) => e.stopPropagation()}>
-          <button className="ghost" onClick={() => goTo(current() - 1)} disabled={page.n <= 1} aria-label="Previous page">
-            ‹
-          </button>
-          <span className="mono">
-            {page.n} <span className="faint">/ {page.total}</span>
-          </span>
-          <button className="ghost" onClick={() => goTo(current() + 1)} disabled={page.n >= page.total} aria-label="Next page">
-            ›
-          </button>
+      {kind && focus && (
+        <div className="pager-float mono" aria-hidden="true">
+          {page.n} / {page.total}
         </div>
       )}
 

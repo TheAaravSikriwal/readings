@@ -63,14 +63,48 @@ export async function flush() {
   }
 }
 
-function commit(fn: (lib: Library) => void) {
-  fn(state.lib);
-  set({ tree: new Tree(state.lib), rev: state.rev + 1, save: EDITABLE ? 'saving' : state.save });
+function scheduleSave() {
   if (!EDITABLE) return;
   dirty = true;
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(flush, 450);
 }
+
+// ---- undo / redo: whole-library snapshots (the library is one small JSON file)
+
+const past: string[] = [];
+const future: string[] = [];
+let lastKey = '';
+let lastAt = 0;
+
+/** Keeps the library as it was before a change. Changes that share a key and
+ * come close together (typing in one field) are one step. */
+function remember(key: string) {
+  const t = Date.now();
+  if (key && key === lastKey && t - lastAt < 1200) {
+    lastAt = t;
+    return;
+  }
+  past.push(JSON.stringify(state.lib));
+  if (past.length > 120) past.shift();
+  future.length = 0;
+  lastKey = key;
+  lastAt = t;
+}
+
+function apply(lib: Library) {
+  set({ lib, tree: new Tree(lib), rev: state.rev + 1, save: EDITABLE ? 'saving' : state.save });
+  scheduleSave();
+}
+
+function commit(fn: (lib: Library) => void, key = '') {
+  if (EDITABLE) remember(key);
+  fn(state.lib);
+  set({ tree: new Tree(state.lib), rev: state.rev + 1, save: EDITABLE ? 'saving' : state.save });
+  scheduleSave();
+}
+
+const fieldKey = (prefix: string, id: string, patch: object) => `${prefix}:${id}:${Object.keys(patch).sort().join(',')}`;
 
 if (EDITABLE) {
   document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flush());
@@ -88,6 +122,7 @@ export const actions = {
       lib.links ??= [];
       lib.title ||= 'Readings';
       for (const n of lib.nodes) if (n.type === 'article') n.highlights ??= [];
+      past.length = future.length = 0;
       set({ lib, tree: new Tree(lib), rev: state.rev + 1, loaded: true });
     } catch (e: any) {
       set({ loaded: true, error: e?.message ?? String(e) });
@@ -98,8 +133,27 @@ export const actions = {
     commit((l) => Object.assign(l, lib));
   },
 
+  /** Steps back one change. Returns false when there is nothing to undo. */
+  undo() {
+    const prev = past.pop();
+    if (!prev) return false;
+    future.push(JSON.stringify(state.lib));
+    lastKey = '';
+    apply(JSON.parse(prev));
+    return true;
+  },
+
+  redo() {
+    const next = future.pop();
+    if (!next) return false;
+    past.push(JSON.stringify(state.lib));
+    lastKey = '';
+    apply(JSON.parse(next));
+    return true;
+  },
+
   setTitle(title: string) {
-    commit((lib) => void (lib.title = title));
+    commit((lib) => void (lib.title = title), 'title');
   },
 
   addTopic(parent: string | null, title: string) {
@@ -120,7 +174,7 @@ export const actions = {
     commit(() => {
       const n = state.tree.get(id);
       if (n) Object.assign(n, patch);
-    });
+    }, fieldKey('node', id, patch));
   },
 
   /** Fills only fields that are still empty. The title is also replaced while it is still the placeholder. */
@@ -144,7 +198,9 @@ export const actions = {
     return true;
   },
 
-  /** Deleting a topic keeps its contents: they move up one level. */
+  /** Deleting a topic keeps its contents: they move up one level. A deleted
+   * reading's file is moved to data/trash by the server once nothing points at
+   * it, and comes back if the delete is undone. */
   remove(id: string) {
     const t = state.tree;
     const n = t.get(id);
@@ -154,7 +210,6 @@ export const actions = {
       lib.nodes = lib.nodes.filter((x) => x.id !== id);
       lib.links = lib.links.filter((l) => l.a !== id && l.b !== id);
     });
-    if (n.type === 'article' && n.file && EDITABLE) api.trash(n.file).catch(() => {});
   },
 
   linkBetween(a: string, b: string): Link | undefined {
@@ -180,7 +235,7 @@ export const actions = {
     commit((lib) => {
       const l = lib.links.find((x) => x.id === linkId);
       if (l) Object.assign(l, patch);
-    });
+    }, fieldKey('link', linkId, patch));
   },
 
   addHighlight(articleId: string, h: Omit<Highlight, 'id' | 'created' | 'note'>) {
@@ -196,7 +251,7 @@ export const actions = {
     commit(() => {
       const a = article(articleId);
       if (a) a.highlights = a.highlights.map((x) => (x.id === hid ? { ...x, ...patch } : x));
-    });
+    }, fieldKey('hl', hid, patch));
   },
 
   removeHighlight(articleId: string, hid: string) {

@@ -24,10 +24,11 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 | click a bubble | open a topic (like a folder) or an article's card |
 | double-click a pearl / **read** | open the reader |
 | drag a bubble onto a topic | move it there |
-| shift-click a bubble (with an article open) | connect / disconnect them |
+| shift-click a bubble | connect it to the open article, or to the topic you're in (click again to disconnect) |
 | right-click a bubble | add material here, rename, connect, move, hide from website, delete |
 | `/` | search titles, authors, highlights and notes |
-| `Esc` | back out one level |
+| click empty space, or `Esc` | back out one level |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo |
 | `n` | new topic |
 
 **Reading:**
@@ -39,11 +40,16 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 | click a highlight or margin dot | read or edit its note |
 | **+ note** in the side panel | a note about the whole reading |
 | `←` `→`, PgUp/PgDn, or the ‹ › pager | previous / next page |
-| **focus** (`F`) | full screen, just the page. Click left/right of the page to turn it |
+| **focus** (`F`) | full screen, just the page, no edges. Click left/right of it to turn the page |
+| **paper** (`W`) | page colour: white, warm or dark |
 | **export** | this article's summary and notes as Markdown |
 
 **export** in the bottom bar downloads all your notes and summaries (or one topic) as
 Markdown, or a full JSON backup.
+
+Anything can connect to anything: readings, subtopics and main topics. A bubble stays anchored
+to its parent but drifts toward what it's connected to: 10% of the way per connection, halfway
+at five, and never more than 65%.
 
 Double-click a breadcrumb to rename it. The address bar always points at what's open,
 so you can link straight to an article.

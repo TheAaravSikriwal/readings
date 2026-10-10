@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { openPdf, pdfjs } from './pdfjs';
 import { SelectionPop } from './SelectionPop';
@@ -12,7 +13,6 @@ interface Props {
   zoom: number;
   /** 'page' fits a whole page on screen (focus mode); 'width' fits the column */
   fit: 'width' | 'page';
-  invert: boolean;
   editable: boolean;
   jump: { id: string; n: number } | null;
   onPick: (id: string | null, x: number, y: number) => void;
@@ -61,7 +61,7 @@ function firstOnPage(marks: { h: Highlight; r: Rect }[]) {
   return marks.filter(({ h }) => hasNote(h) && !seen.has(h.id) && seen.add(h.id));
 }
 
-export function PdfDoc({ url, highlights, active, zoom, fit, invert, editable, jump, onPick, onCreate }: Props) {
+export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onPick, onCreate }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [sizes, setSizes] = useState<{ w: number; h: number }[]>([]);
@@ -121,7 +121,7 @@ export function PdfDoc({ url, highlights, active, zoom, fit, invert, editable, j
   }, [jump]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const aspect = sizes[0] ? sizes[0].w / sizes[0].h : 0.77;
-  const fitted = fit === 'page' ? Math.min(width - 24, (height - 24) * aspect) : Math.min(width - 48, 860);
+  const fitted = fit === 'page' ? Math.min(width, height * aspect * 1.4) : Math.min(width - 48, 860);
   const pageWidth = Math.max(280, fitted * zoom);
 
   const byPage = useMemo(() => {
@@ -191,7 +191,7 @@ export function PdfDoc({ url, highlights, active, zoom, fit, invert, editable, j
   if (error) return <div className="doc-msg">Couldn't open this PDF. {error}</div>;
 
   return (
-    <div className={`pdf ${invert ? 'invert' : ''}`} ref={box} onMouseUp={onMouseUp}>
+    <div className="pdf" ref={box} onMouseUp={onMouseUp}>
       {!doc && <div className="doc-msg">opening…</div>}
       {doc &&
         sizes.map((s, i) => (
@@ -208,15 +208,19 @@ export function PdfDoc({ url, highlights, active, zoom, fit, invert, editable, j
             <div className="page-num">{i + 1}</div>
           </div>
         ))}
-      {pending && (
-        <SelectionPop
-          x={pending.x}
-          y={pending.y}
-          onHighlight={() => commit(false)}
-          onNote={() => commit(true)}
-          onDismiss={() => setPending(null)}
-        />
-      )}
+      {pending &&
+        // Outside the pages: they carry the paper's colour filter, and in focus
+        // mode the reader is the full-screen element, so it goes there.
+        createPortal(
+          <SelectionPop
+            x={pending.x}
+            y={pending.y}
+            onHighlight={() => commit(false)}
+            onNote={() => commit(true)}
+            onDismiss={() => setPending(null)}
+          />,
+          box.current?.closest('.reader') ?? document.body,
+        )}
     </div>
   );
 }

@@ -100,6 +100,30 @@ export function library(opts: LibraryOptions = {}): Plugin {
     for (const old of list.slice(0, Math.max(0, list.length - 29))) await fsp.rm(path.join(dir, old));
   }
 
+  /** Keeps data/files in step with the library: a file the library points at
+   * but that sits in the trash (an undone delete) comes back, and a file
+   * nothing has pointed at for 10 minutes goes to the trash. Not sooner, since
+   * a new upload is saved a moment before the reading that holds it. */
+  async function reconcileFiles(lib: any) {
+    const wanted = new Set<string>(
+      lib.nodes.map((n: any) => n.file).filter((f: unknown) => typeof f === 'string' && FILE_RE.test(f)),
+    );
+    const trash = path.join(dataDir, 'trash');
+    const trashed = fs.existsSync(trash) ? (await fsp.readdir(trash)).sort() : [];
+    for (const f of wanted) {
+      if (fs.existsSync(path.join(filesDir(), f))) continue;
+      const back = trashed.filter((t) => t.endsWith(`-${f}`)).at(-1);
+      if (back) await fsp.rename(path.join(trash, back), path.join(filesDir(), f));
+    }
+    for (const f of await fsp.readdir(filesDir())) {
+      if (wanted.has(f) || !FILE_RE.test(f)) continue;
+      const age = Date.now() - (await fsp.stat(path.join(filesDir(), f))).mtimeMs;
+      if (age < 10 * 60 * 1000) continue;
+      await fsp.mkdir(trash, { recursive: true });
+      await fsp.rename(path.join(filesDir(), f), path.join(trash, `${Date.now()}-${f}`));
+    }
+  }
+
   return {
     name: 'readings-library',
 
@@ -143,6 +167,7 @@ export function library(opts: LibraryOptions = {}): Plugin {
             const tmp = libFile() + '.tmp';
             await fsp.writeFile(tmp, JSON.stringify(lib, null, 2), 'utf8');
             await fsp.rename(tmp, libFile());
+            reconcileFiles(lib).catch(() => {});
             return send(res, 200, { ok: true });
           }
           if (p === '/api/upload' && req.method === 'POST') {
