@@ -1,6 +1,9 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { EditScreen } from './edit/EditScreen';
+import { useEditor } from './edit/useEditor';
 import { attachPdf, importPdf, looksLikeUrl } from './importer';
 import { MapCanvas } from './map/MapCanvas';
+import type { MapCallbacks, MapView } from './map/MapView';
 import { glossary, guessCite, referenceList } from './notes';
 import { actions, EDITABLE, getState, useStore } from './store';
 import { AddMaterial, type AddSeed } from './ui/AddMaterial';
@@ -56,6 +59,17 @@ export default function App() {
   /* A bookmark to go to when the reader opens from a pin. */
   const [readBm, setReadBm] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 680px)').matches);
+  // The edit screen (local app only): the whole map, with every bubble and line editable.
+  const [editing, setEditing] = useState(false);
+  const [layersOpen, setLayersOpen] = useState(() => {
+    try {
+      return localStorage.getItem('layers') !== 'closed';
+    } catch {
+      return true;
+    }
+  });
+  const mapApi = useRef<MapView | null>(null);
+  const ed = useEditor(mapApi, (topic) => setAdding({ topic }));
 
   useEffect(() => {
     const mq = matchMedia('(max-width: 680px)');
@@ -127,6 +141,22 @@ export default function App() {
     });
   };
 
+  const enterEdit = () => {
+    if (!EDITABLE) return;
+    setMenu(null);
+    setPalette(null);
+    ed.setConnectFrom(null);
+    ed.setSel(selected ? { node: selected } : focus ? { node: focus } : null);
+    setEditing(true);
+  };
+  const exitEdit = () => {
+    ed.setConnectFrom(null);
+    ed.setQuick(null);
+    setEditing(false);
+    // Back on the map, where you were in the editor.
+    if (ed.selNode) open(ed.selNode);
+  };
+
   const up = () => {
     if (selected) setSelected(null);
     else if (focus) setFocus(tree.parentOf(focus));
@@ -179,7 +209,7 @@ export default function App() {
   // Keyboard: / search · Esc back out · Enter read · n new topic
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (reading || palette || prompt || adding || exporting || publishing || typing(e.target)) return;
+      if (editing || reading || palette || prompt || adding || exporting || publishing || typing(e.target)) return;
       if (e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) {
         e.preventDefault();
         setPalette({ kind: 'search' });
@@ -189,6 +219,7 @@ export default function App() {
       } else if (e.key === 'Enter' && selected) setReading(selected);
       else if (EDITABLE && e.key === 'n' && !e.metaKey && !e.ctrlKey) newTopic(focus);
       else if (EDITABLE && e.key === 'a' && !e.metaKey && !e.ctrlKey) setAdding({});
+      else if (EDITABLE && e.key === 'e' && !e.metaKey && !e.ctrlKey) enterEdit();
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -279,6 +310,29 @@ export default function App() {
 
   const empty = loaded && !lib.nodes.length;
 
+  const browse: MapCallbacks = {
+    onClick: (id, ev) => {
+      setMenu(null);
+      // Shift-click connects from the open reading, or else from the topic you're in.
+      const from = selected ?? focus;
+      if (ev.shiftKey && EDITABLE && from && id !== from) {
+        const had = actions.linkBetween(from, id);
+        actions.toggleConnection(from, id);
+        actions.toast(`${had ? 'Disconnected' : 'Connected'} “${tree.get(from)?.title}” and “${tree.get(id)?.title}”`);
+      } else open(id);
+    },
+    onDblClick: (id) => tree.article(id) && setReading(id),
+    onRightClick: (id, ev) => EDITABLE && setMenu({ id, x: ev.clientX, y: ev.clientY }),
+    onBackground: () => {
+      // Empty space backs out one step: the open card first, then the topic you're in.
+      if (menu) return setMenu(null);
+      up();
+    },
+    onDrop: (id, into) => {
+      if (actions.move(id, into)) actions.toast(`Moved “${tree.get(id)?.title}” into “${into ? tree.get(into)?.title : lib.title}”`);
+    },
+  };
+
   return (
     <div className="app">
       <MapCanvas
@@ -288,29 +342,16 @@ export default function App() {
         paused={!!reading}
         shiftX={narrow ? 0 : (CARD_WIDTH + 24) / 2}
         shiftY={narrow ? Math.round(window.innerHeight * 0.3) : 0}
-        onClick={(id, ev) => {
-          setMenu(null);
-          // Shift-click connects from the open reading, or else from the topic you're in.
-          const from = selected ?? focus;
-          if (ev.shiftKey && EDITABLE && from && id !== from) {
-            const had = actions.linkBetween(from, id);
-            actions.toggleConnection(from, id);
-            actions.toast(`${had ? 'Disconnected' : 'Connected'} “${tree.get(from)?.title}” and “${tree.get(id)?.title}”`);
-          }
-          else open(id);
-        }}
-        onDblClick={(id) => tree.article(id) && setReading(id)}
-        onRightClick={(id, ev) => EDITABLE && setMenu({ id, x: ev.clientX, y: ev.clientY })}
-        onBackground={() => {
-          // Empty space backs out one step: the open card first, then the topic you're in.
-          if (menu) return setMenu(null);
-          up();
-        }}
-        onDrop={(id, into) => {
-          if (actions.move(id, into)) actions.toast(`Moved “${tree.get(id)?.title}” into “${into ? tree.get(into)?.title : lib.title}”`);
-        }}
+        editing={editing}
+        editNode={ed.selNode}
+        editLink={ed.selLink}
+        connectFrom={ed.connectFrom}
+        editInsets={narrow ? undefined : { left: layersOpen ? 276 : 0, right: 356 }}
+        api={mapApi}
+        {...(editing ? ed.handlers : browse)}
       />
 
+      {!editing && (
       <TopBar
         focus={focus}
         onGo={open}
@@ -323,8 +364,9 @@ export default function App() {
           setReading(articleId);
         }}
       />
+      )}
 
-      {selected && !reading && (
+      {selected && !reading && !editing && (
         <Card
           id={selected}
           onRead={() => setReading(selected)}
@@ -340,7 +382,7 @@ export default function App() {
         />
       )}
 
-      {empty && (
+      {empty && !editing && (
         <div className="empty">
           <div className="empty-orb" />
           <h1>{EDITABLE ? 'Start your reading map' : 'Nothing here yet'}</h1>
@@ -360,6 +402,7 @@ export default function App() {
         </div>
       )}
 
+      {!editing && (
       <div className="toolbar">
         {EDITABLE && (
           <>
@@ -367,6 +410,9 @@ export default function App() {
               + add material
             </button>
             <button onClick={() => newTopic(focus)}>+ topic</button>
+            <button onClick={enterEdit} title="Edit the map: every bubble and line, with settings (E)">
+              edit <kbd>E</kbd>
+            </button>
             <span className="tsep" />
           </>
         )}
@@ -383,8 +429,9 @@ export default function App() {
           </>
         )}
       </div>
+      )}
 
-      {!reading && (
+      {!reading && !editing && (
         <Shelf
           terms={terms}
           refs={refs}
@@ -409,7 +456,25 @@ export default function App() {
         />
       )}
 
-      {!empty && !shelfUp && (
+      {editing && !reading && (
+        <EditScreen
+          ed={ed}
+          api={mapApi}
+          layersOpen={layersOpen}
+          onLayers={(on) => {
+            setLayersOpen(on);
+            try {
+              localStorage.setItem('layers', on ? 'open' : 'closed');
+            } catch {
+              // private mode
+            }
+          }}
+          onRead={(id) => setReading(id)}
+          onExit={exitEdit}
+        />
+      )}
+
+      {!empty && !shelfUp && !editing && (
         <div className="hint">
           {EDITABLE
             ? 'click to open · double-click to read · drag onto a topic to move · shift-click to connect · right-click for more'
@@ -431,6 +496,7 @@ export default function App() {
           }}
           onAdded={(id) => {
             const from = adding.cites;
+            if (editing && !from) return ed.setSel({ node: id });
             if (!from) return open(id);
             actions.linkReference(from.articleId, from.highlightId, id);
             if (reading) actions.toast(`Added to the map, connected to “${from.title}”`);

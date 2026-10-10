@@ -37,6 +37,8 @@ interface Base {
   parent: string | null;
   hidden?: boolean; // left out of the public build
   created: string;
+  /** Pinned in the edit screen: it stays at this spot on the map instead of floating. */
+  pin?: [number, number, number];
 }
 
 export interface Topic extends Base {
@@ -81,9 +83,19 @@ export interface Link {
   note?: string;
 }
 
+/** How the map lays itself out, set in the edit screen. */
+export interface MapSettings {
+  /** How far apart bubbles sit: 1 is the default, 0.6 tight, 1.8 roomy. */
+  spacing?: number;
+  /** How hard connections pull a bubble away from its parent: 1 is the default
+   * (10% of the way per connection, halfway at five, never past 65%). */
+  pull?: number;
+}
+
 export interface Library {
   version: 1;
   title: string;
   nodes: LibNode[];
   links: Link[];
+  settings?: MapSettings;
 }

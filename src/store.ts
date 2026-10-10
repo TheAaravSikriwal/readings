@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
 import { Tree } from './tree';
-import type { Article, Bookmark, Highlight, Library, Link, Topic } from './types';
+import type { Article, Bookmark, Highlight, Library, Link, MapSettings, Topic } from './types';
 
 /** Editing only exists on the local dev server; the built website is read-only. */
 export const EDITABLE = import.meta.env.DEV;
@@ -194,8 +194,87 @@ export const actions = {
     const t = state.tree;
     if (parent === id || t.get(id)?.parent === parent) return false;
     if (parent && (t.get(parent)?.type !== 'topic' || t.isInside(parent, id))) return false;
-    commit(() => void (t.get(id)!.parent = parent));
+    commit(() => {
+      const n = t.get(id)!;
+      n.parent = parent;
+      delete n.pin; // it orbits its new topic now
+    });
     return true;
+  },
+
+  setSettings(patch: Partial<MapSettings>) {
+    commit((lib) => void (lib.settings = { ...lib.settings, ...patch }), `settings:${Object.keys(patch).sort().join(',')}`);
+  },
+
+  /** Holds a bubble at a spot on the map (null lets it float again). */
+  pin(id: string, at: [number, number, number] | null) {
+    commit(() => {
+      const n = state.tree.get(id);
+      if (!n) return;
+      if (at) n.pin = at;
+      else delete n.pin;
+    });
+  },
+
+  unpinAll() {
+    commit((lib) => lib.nodes.forEach((n) => delete n.pin));
+  },
+
+  /** A new bubble in the middle of a connection: A to B becomes A to new to B.
+   * It goes in the deepest topic that holds both ends. */
+  insertOnLink(linkId: string, kind: 'topic' | 'article', title: string) {
+    const l = state.lib.links.find((x) => x.id === linkId);
+    if (!l) return null;
+    const t = state.tree;
+    const holders = (id: string) => {
+      const n = t.get(id);
+      return t.path(n?.type === 'topic' ? id : (n?.parent ?? null)).map((x) => x.id);
+    };
+    const inB = new Set(holders(l.b));
+    let parent: string | null = null;
+    for (const h of holders(l.a)) if (inB.has(h)) parent = h;
+    const id = uid(kind === 'topic' ? 't' : 'a');
+    commit((lib) => {
+      lib.nodes.push(
+        kind === 'topic'
+          ? { id, type: 'topic', title, parent, created: now() }
+          : { id, type: 'article', title, parent, highlights: [], created: now() },
+      );
+      const old = lib.links.find((x) => x.id === linkId)!;
+      const b = old.b;
+      old.b = id;
+      lib.links.push({ id: uid('l'), a: id, b });
+    });
+    return id;
+  },
+
+  /** A new topic between a bubble and the topic it's in. */
+  insertAbove(childId: string, title: string) {
+    const c = state.tree.get(childId);
+    if (!c) return null;
+    const id = uid('t');
+    commit((lib) => {
+      lib.nodes.push({ id, type: 'topic', title, parent: c.parent, created: now() });
+      const n = lib.nodes.find((x) => x.id === childId)!;
+      n.parent = id;
+      delete n.pin;
+    });
+    return id;
+  },
+
+  /** Moves one end of a connection onto another bubble. Returns why not, or null. */
+  relink(linkId: string, which: 'a' | 'b', target: string): string | null {
+    const l = state.lib.links.find((x) => x.id === linkId);
+    if (!l || !state.tree.get(target)) return 'That bubble is gone.';
+    const keep = which === 'a' ? l.b : l.a;
+    if (target === (which === 'a' ? l.a : l.b)) return null;
+    if (target === keep) return 'A bubble can’t connect to itself.';
+    if (actions.linkBetween(keep, target)) return 'Those two are already connected.';
+    commit(() => {
+      if (which === 'a') l.a = target;
+      else l.b = target;
+    });
+    return null;
   },
 
   /** Deleting a topic keeps its contents: they move up one level. A deleted

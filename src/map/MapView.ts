@@ -41,6 +41,8 @@ export interface GNode {
   annotated: boolean;
   /** Has bookmarks: its label carries a red ribbon. */
   marked?: boolean;
+  /** Held at a spot (edit screen). */
+  pin?: [number, number, number];
   pending: boolean;
   /** brightness targets, set by retarget() and eased toward in tick() */
   opT: number;
@@ -74,7 +76,29 @@ export interface MapCallbacks {
   onBackground(): void;
   /** A bubble was dragged onto a topic (null = top level). */
   onDrop(id: string, into: string | null): void;
+  // The edit screen only:
+  /** A line was clicked. Parent lines are `p:<child id>`, connections their own id. */
+  onLinkClick?(id: string, ev: MouseEvent): void;
+  /** The + in the middle of a line was clicked. */
+  onLinkInsert?(id: string, x: number, y: number): void;
+  /** One end of a line was dragged onto a bubble (null: let go over nothing). */
+  onLinkEnd?(id: string, which: 'a' | 'b', target: string | null): void;
+  /** The dot on a bubble was dragged onto another one. */
+  onConnect?(a: string, b: string): void;
+  /** A bubble was dropped in open space and stays there. */
+  onPin?(id: string, at: [number, number, number]): void;
+  onBackgroundDbl?(x: number, y: number): void;
 }
+
+type Pt = { x: number; y: number };
+const segDist = (px: number, py: number, a: Pt, b: Pt) => {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const L = dx * dx + dy * dy;
+  const t = L ? Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / L)) : 0;
+  return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
+};
+const round1 = (v = 0) => Math.round(v * 10) / 10;
 
 const GEO = new THREE.SphereGeometry(1, 48, 32);
 const end = (e: string | GNode) => (typeof e === 'string' ? e : e.id);
@@ -87,8 +111,8 @@ const smooth = (a: number, b: number, x: number) => {
  * of what it is connected to: 10% per connection, so five put it halfway,
  * then 3% more for each one after that, stopping at 65%. Its parent always
  * keeps the larger share. */
-export const pullShare = (connections: number) =>
-  connections <= 5 ? 0.1 * connections : Math.min(0.65, 0.5 + 0.03 * (connections - 5));
+export const pullShare = (connections: number, strength = 1) =>
+  Math.min(0.65, (connections <= 5 ? 0.1 * connections : 0.5 + 0.03 * (connections - 5)) * strength);
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -145,6 +169,39 @@ export class MapView {
   private paused = false;
   private raf = 0;
   private ro: ResizeObserver;
+  private viewShift = { x: 0, y: 0 };
+
+  /* The edit screen: everything shown, bubbles and lines selectable, handles
+   * on whatever is selected. */
+  private editing = false;
+  private editNode: string | null = null;
+  private editLink: string | null = null;
+  private connectFrom: string | null = null;
+  private hoverLink: string | null = null;
+  private editTarget: string | null = null;
+  private handle: { kind: 'end' | 'connect'; link?: string; which?: 'a' | 'b'; from: string } | null = null;
+  private plusFor: string | null = null;
+  private lastBg = { t: 0, x: 0, y: 0 };
+  /** px of the map the edit screen's side panels cover, left and right */
+  private insets = { left: 0, right: 0 };
+  private ov: {
+    root: HTMLDivElement;
+    hover: SVGLineElement;
+    sel: SVGLineElement;
+    rubber: SVGLineElement;
+    plus: HTMLButtonElement;
+    ends: [HTMLDivElement, HTMLDivElement];
+    dot: HTMLDivElement;
+  } | null = null;
+  private settings = { spacing: 1, pull: 1 };
+  private spawn = new Map<string, { x: number; y: number; z: number }>();
+  private drift = (() => {
+    try {
+      return localStorage.getItem('drift') !== 'off';
+    } catch {
+      return true;
+    }
+  })();
 
   constructor(private el: HTMLElement, private cb: MapCallbacks, editable: boolean) {
     const labels = new CSS2DRenderer();
@@ -194,24 +251,18 @@ export class MapView {
         const t = this.dropTarget;
         this.dragging = this.dropTarget = null;
         this.retarget();
-        if (t) cb.onDrop(n.id, t);
+        if (t) return cb.onDrop(n.id, t);
+        if (this.editing && n.x !== undefined) {
+          // Let go in open space while editing: it stays where you put it.
+          const at: [number, number, number] = [round1(n.x), round1(n.y), round1(n.z)];
+          [n.fx, n.fy, n.fz] = at;
+          n.pin = at;
+          cb.onPin?.(n.id, at);
+        } else if (n.pin) [n.fx, n.fy, n.fz] = n.pin;
       });
 
-    // Forces: topics push apart, articles orbit their topic, cross-links pull gently.
-    (this.g.d3Force('link') as any)
-      .distance((l: GLink) => this.linkDistance(l))
-      .strength((l: GLink) => {
-        if (l.kind === 'cross') return 0;
-        const pulled = (this.pulls.get(end(l.target))?.length ?? 0) > 0;
-        return pulled ? 0.01 : l.kind === 'root' ? 0.3 : 0.7;
-      });
+    this.applyForces();
     this.g.d3Force('pull', this.pullForce() as any);
-    // Main topics push each other far apart, so each reads as its own cluster.
-    (this.g.d3Force('charge') as any)
-      .strength((n: GNode) =>
-        n.kind === 'root' ? -20 : n.kind === 'topic' ? (n.depth === 1 ? -320 - n.r * 8 : -110 - n.r * 4) : -32,
-      )
-      .distanceMax(520);
     this.g.d3Force('collide', forceCollide((n: GNode) => n.r * 1.3 + 2).strength(0.75) as any);
 
     Object.assign(this.controls, {
@@ -237,6 +288,7 @@ export class MapView {
     this.g.cameraPosition({ x: 0, y: 40, z: 900 });
 
     this.listen();
+    if (editable) this.buildOverlay();
 
     this.ro = new ResizeObserver(() => this.g.width(el.clientWidth).height(el.clientHeight));
     this.ro.observe(el);
@@ -283,13 +335,18 @@ export class MapView {
     }
 
     const next: GNode[] = [this.root];
+    let repin = false;
     for (const n of lib.nodes) {
       let g = this.nodes.get(n.id);
       if (!g) {
         g = { id: n.id, kind: n.type, title: '', r: 1, depth: 1, hidden: false, annotated: false, pending: false, opT: 0, labT: 0, haloT: 0 };
-        // New bubbles bud out of their parent.
+        // New bubbles bud out of their parent, or appear where they were made.
         const p = this.nodes.get(parentOf.get(n.id)!) ?? this.root;
-        if (p.x !== undefined && this.framedOnce) {
+        const at = this.spawn.get(n.id);
+        if (at) {
+          Object.assign(g, at);
+          this.spawn.delete(n.id);
+        } else if (p.x !== undefined && this.framedOnce) {
           const j = () => (Math.random() - 0.5) * 8;
           Object.assign(g, { x: p.x + j(), y: (p.y ?? 0) + j(), z: (p.z ?? 0) + j() });
         }
@@ -302,6 +359,23 @@ export class MapView {
       g.pending = pending.has(n.id);
       g.annotated = n.type === 'article' && (n.highlights.length > 0 || !!n.summary?.trim());
       g.marked = n.type === 'article' && !!n.bookmarks?.length;
+      // Pinned in the edit screen: held there (unless it's being dragged right now).
+      if (this.dragging !== n.id) {
+        const pin = n.pin;
+        if (pin) {
+          if (g.fx !== pin[0] || g.fy !== pin[1] || g.fz !== pin[2]) {
+            [g.fx, g.fy, g.fz] = pin;
+            if (g.x === undefined) [g.x, g.y, g.z] = pin;
+            repin = true;
+          }
+        } else if (g.pin) {
+          delete g.fx;
+          delete g.fy;
+          delete g.fz;
+          repin = true;
+        }
+        g.pin = pin;
+      }
       g.r =
         n.type === 'article'
           ? 4.2
@@ -361,6 +435,17 @@ export class MapView {
       this.g.graphData({ nodes: next, links: [...want.values()] });
     }
     if (this.focus !== ROOT && !this.nodes.has(this.focus)) this.focus = ROOT;
+
+    const settings = {
+      spacing: Math.min(2, Math.max(0.5, lib.settings?.spacing ?? 1)),
+      pull: Math.min(2, Math.max(0, lib.settings?.pull ?? 1)),
+    };
+    const relayout = settings.spacing !== this.settings.spacing || settings.pull !== this.settings.pull;
+    if (relayout) {
+      this.settings = settings;
+      this.applyForces();
+    }
+    if ((relayout || repin) && this.framedOnce) this.g.d3ReheatSimulation();
     this.retarget();
 
     if (!this.framedOnce && lib.nodes.length) {
@@ -380,9 +465,91 @@ export class MapView {
     const moved = f !== this.focus || selected !== this.selected;
     this.focus = f;
     this.selected = selected;
-    this.offsetT = selected ? { x: shiftX, y: shiftY } : { x: 0, y: 0 };
+    this.viewShift = { x: shiftX, y: shiftY };
+    if (!this.editing) this.offsetT = selected ? { x: shiftX, y: shiftY } : { x: 0, y: 0 };
     this.retarget();
-    if (moved && this.framedOnce) this.frame();
+    if (moved && this.framedOnce && !this.editing) this.frame();
+  }
+
+  // ---------------------------------------------------------------- edit screen
+
+  /** Turns the edit screen on or off, and says what's selected in it. */
+  setEdit(on: boolean, node: string | null, link: string | null, connectFrom: string | null, left = 0, right = 0) {
+    const entering = on && !this.editing;
+    const leaving = !on && this.editing;
+    this.editing = on;
+    this.editNode = node;
+    this.editLink = link;
+    this.connectFrom = connectFrom;
+    this.insets = on ? { left, right } : { left: 0, right: 0 };
+    // Centre the map in the space between the panels.
+    if (on) this.offsetT = { x: (right - left) / 2, y: 0 };
+    else {
+      this.hoverLink = this.editTarget = this.handle = null;
+      if (leaving) this.offsetT = this.selected ? { ...this.viewShift } : { x: 0, y: 0 };
+    }
+    this.el.classList.toggle('editing', on);
+    this.el.style.cursor = connectFrom ? 'crosshair' : '';
+    this.retarget();
+    this.drawOverlay();
+    if (entering && this.framedOnce) this.frameAll(900);
+    if (leaving && this.framedOnce) this.frame(900);
+  }
+
+  /** The whole map in view. */
+  frameAll(ms = 800) {
+    const all = [...this.nodes.values()].filter((n) => n.x !== undefined);
+    if (!all.length) return;
+    // Around the middle of the bubbles themselves, not the map's origin.
+    const c = { x: 0, y: 0, z: 0 };
+    for (const n of all) {
+      c.x += n.x! / all.length;
+      c.y += (n.y ?? 0) / all.length;
+      c.z += (n.z ?? 0) / all.length;
+    }
+    this.lastFrame = performance.now();
+    this.flyTo({ ...this.root, ...c, r: 0 }, all, 60, 8000, ms, 0.92);
+  }
+
+  /** One bubble and what's around it in view. */
+  frameNode(id: string, ms = 700) {
+    const n = this.nodes.get(id);
+    if (!n) return;
+    const around = [...(this.neighbors.get(id) ?? []), ...(this.kids.get(id) ?? [])]
+      .map((x) => this.nodes.get(x)!)
+      .filter(Boolean);
+    this.lastFrame = performance.now();
+    this.flyTo(n, around, 40, 900, ms, 1.15);
+  }
+
+  /** Where the next bubble with this id should appear. */
+  spawnAt(id: string, at: { x: number; y: number; z: number } | null | undefined) {
+    if (at) this.spawn.set(id, at);
+  }
+
+  /** The middle of a line, in the map's space. */
+  midpointOf(linkId: string) {
+    const l = this.links.get(linkId);
+    const a = l?.source as GNode | undefined;
+    const b = l?.target as GNode | undefined;
+    if (!a || !b || a.x === undefined || b.x === undefined) return null;
+    return { x: (a.x + b.x) / 2, y: ((a.y ?? 0) + (b.y ?? 0)) / 2, z: ((a.z ?? 0) + (b.z ?? 0)) / 2 };
+  }
+
+  /** The point in the map under a screen point, level with what you're looking at. */
+  worldAt(clientX: number, clientY: number) {
+    const rect = this.el.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(this.camera.getWorldDirection(new THREE.Vector3()), this.controls.target);
+    const out = new THREE.Vector3();
+    return ray.ray.intersectPlane(plane, out) ? { x: out.x, y: out.y, z: out.z } : null;
+  }
+
+  /** The slow spin when nothing's touched. */
+  setDrift(on: boolean) {
+    this.drift = on;
   }
 
   /** Highlights the bubble you're connecting from. */
@@ -446,14 +613,24 @@ export class MapView {
       if (e.button === 2) this.rightMoved = moved;
       if (e.button !== 0 || moved || performance.now() - p.t > 800) return;
       const id = this.pick(e.clientX, e.clientY);
-      if (id) this.handleClick(id, e);
-      else this.cb.onBackground();
+      if (id) return this.handleClick(id, e);
+      const link = this.editing ? this.pickLink(e.clientX, e.clientY) : null;
+      if (link) return this.cb.onLinkClick?.(link, e);
+      const t = performance.now();
+      if (this.editing && t - this.lastBg.t < 340 && Math.hypot(e.clientX - this.lastBg.x, e.clientY - this.lastBg.y) < 12) {
+        this.lastBg = { t: 0, x: 0, y: 0 };
+        return this.cb.onBackgroundDbl?.(e.clientX, e.clientY);
+      }
+      this.lastBg = { t, x: e.clientX, y: e.clientY };
+      this.cb.onBackground();
     });
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       if (this.rightMoved) return (this.rightMoved = false); // that was a pan
       const id = this.pick(e.clientX, e.clientY);
-      if (id) this.cb.onRightClick(id, e);
+      if (id) return this.cb.onRightClick(id, e);
+      const link = this.editing ? this.pickLink(e.clientX, e.clientY) : null;
+      if (link) this.cb.onLinkClick?.(link, e);
     });
     el.addEventListener('pointermove', (e) => {
       this.lastPointer = performance.now();
@@ -497,6 +674,211 @@ export class MapView {
     return best;
   }
 
+  /** Screen position (px inside the map) of a point in the map; null behind the camera. */
+  private screenOf(x = 0, y = 0, z = 0): Pt | null {
+    const v = new THREE.Vector3(x, y, z).project(this.camera);
+    if (v.z < -1 || v.z > 1) return null;
+    return { x: ((v.x + 1) / 2) * this.el.clientWidth, y: ((1 - v.y) / 2) * this.el.clientHeight };
+  }
+
+  /** The part of a line you can see, between the two bubbles' surfaces, on screen. */
+  private lineOnScreen(l: GLink) {
+    const a = l.source as GNode;
+    const b = l.target as GNode;
+    if (typeof a !== 'object' || typeof b !== 'object' || a.x === undefined || b.x === undefined) return null;
+    const A = new THREE.Vector3(a.x, a.y, a.z);
+    const B = new THREE.Vector3(b.x, b.y, b.z);
+    const len = A.distanceTo(B);
+    const ra = a.r * Math.max(a.v?.s ?? 1, 0.2);
+    const rb = b.r * Math.max(b.v?.s ?? 1, 0.2);
+    if (len < ra + rb + 0.5) return null;
+    const dir = B.clone().sub(A).divideScalar(len);
+    const pa = A.clone().addScaledVector(dir, ra);
+    const pb = B.clone().addScaledVector(dir, -rb);
+    const sa = this.screenOf(pa.x, pa.y, pa.z);
+    const sb = this.screenOf(pb.x, pb.y, pb.z);
+    if (!sa || !sb) return null;
+    return { a: sa, b: sb, mid: { x: (sa.x + sb.x) / 2, y: (sa.y + sb.y) / 2 } };
+  }
+
+  /** The line under a screen point (bubbles are checked first). */
+  private pickLink(clientX: number, clientY: number): string | null {
+    const rect = this.el.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    let best: string | null = null;
+    let bestD = 7;
+    for (const l of this.links.values()) {
+      if (l.kind === 'root' || l.op < 0.05) continue;
+      const s = this.lineOnScreen(l);
+      if (!s) continue;
+      const d = segDist(px, py, s.a, s.b);
+      if (d < bestD) {
+        bestD = d;
+        best = l.id;
+      }
+    }
+    return best;
+  }
+
+  private buildOverlay() {
+    const NS = 'http://www.w3.org/2000/svg';
+    const root = document.createElement('div');
+    root.className = 'edit-ov';
+    root.style.display = 'none';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.classList.add('edit-svg');
+    const line = (cls: string) => {
+      const l = document.createElementNS(NS, 'line');
+      l.classList.add(cls);
+      svg.appendChild(l);
+      return l;
+    };
+    const hover = line('ln-hover');
+    const sel = line('ln-sel');
+    const rubber = line('ln-rubber');
+    root.appendChild(svg);
+
+    const plus = document.createElement('button');
+    plus.className = 'ln-plus';
+    plus.textContent = '+';
+    plus.title = 'Add a bubble here';
+    // The overlay's buttons are not clicks on the map behind them.
+    for (const t of ['pointerdown', 'pointerup', 'dblclick'] as const) plus.addEventListener(t, (e) => e.stopPropagation());
+    plus.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (this.plusFor) this.cb.onLinkInsert?.(this.plusFor, e.clientX, e.clientY);
+    });
+    root.appendChild(plus);
+
+    const mkEnd = (which: 'a' | 'b') => {
+      const d = document.createElement('div');
+      d.className = 'ln-end';
+      d.title = 'Drag onto another bubble';
+      d.addEventListener('pointerdown', (e) => this.startHandle(e, 'end', which));
+      root.appendChild(d);
+      return d;
+    };
+    const ends: [HTMLDivElement, HTMLDivElement] = [mkEnd('a'), mkEnd('b')];
+
+    const dot = document.createElement('div');
+    dot.className = 'node-dot';
+    dot.title = 'Drag onto another bubble to connect them';
+    dot.addEventListener('pointerdown', (e) => this.startHandle(e, 'connect'));
+    root.appendChild(dot);
+
+    this.el.appendChild(root);
+    this.ov = { root, hover, sel, rubber, plus, ends, dot };
+  }
+
+  /** Dragging a line's end, or a bubble's connect dot, onto another bubble. */
+  private startHandle(e: PointerEvent, kind: 'end' | 'connect', which?: 'a' | 'b') {
+    e.stopPropagation();
+    e.preventDefault();
+    let from: string;
+    if (kind === 'end') {
+      const l = this.editLink ? this.links.get(this.editLink) : undefined;
+      if (!l) return;
+      // The end you hold moves; the other stays put.
+      from = which === 'a' ? end(l.target) : end(l.source);
+      this.handle = { kind, link: l.id, which, from };
+    } else {
+      if (!this.editNode) return;
+      from = this.editNode;
+      this.handle = { kind, from };
+    }
+    this.lastInput = performance.now();
+    this.pointer = { x: e.clientX, y: e.clientY, inside: true };
+    const over = (x: number, y: number) => {
+      const t = this.pick(x, y);
+      return t && t !== from ? t : null;
+    };
+    const move = (ev: PointerEvent) => {
+      this.pointer = { x: ev.clientX, y: ev.clientY, inside: true };
+      const t = over(ev.clientX, ev.clientY);
+      if (t !== this.editTarget) {
+        this.editTarget = t;
+        this.retarget();
+      }
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      const h = this.handle;
+      const target = over(ev.clientX, ev.clientY);
+      this.handle = this.editTarget = null;
+      this.retarget();
+      if (!h) return;
+      if (h.kind === 'end') this.cb.onLinkEnd?.(h.link!, h.which!, target);
+      else if (target) this.cb.onConnect?.(h.from, target);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
+  /** Draws the edit screen's lines and handles where the map is right now. */
+  private drawOverlay() {
+    const ov = this.ov;
+    if (!ov) return;
+    ov.root.style.display = this.editing ? '' : 'none';
+    if (!this.editing) return;
+    const setLine = (ln: SVGLineElement, a?: Pt | null, b?: Pt | null) => {
+      if (!a || !b) {
+        ln.style.display = 'none';
+        return;
+      }
+      ln.style.display = '';
+      ln.setAttribute('x1', a.x.toFixed(1));
+      ln.setAttribute('y1', a.y.toFixed(1));
+      ln.setAttribute('x2', b.x.toFixed(1));
+      ln.setAttribute('y2', b.y.toFixed(1));
+    };
+    const place = (el: HTMLElement, p: Pt | null | undefined) => {
+      if (!p) {
+        el.style.display = 'none';
+        return;
+      }
+      el.style.display = '';
+      el.style.left = `${p.x.toFixed(1)}px`;
+      el.style.top = `${p.y.toFixed(1)}px`;
+    };
+    const holding = this.handle;
+    const selL = this.editLink ? this.links.get(this.editLink) : undefined;
+    const selS = selL ? this.lineOnScreen(selL) : null;
+    const hovL = this.hoverLink && this.hoverLink !== this.editLink ? this.links.get(this.hoverLink) : undefined;
+    const hovS = hovL && !holding ? this.lineOnScreen(hovL) : null;
+
+    setLine(ov.hover, hovS?.a, hovS?.b);
+    // While an end is held, the line follows the pointer instead.
+    setLine(ov.sel, holding?.kind === 'end' ? null : selS?.a, selS?.b);
+    const plusLine = hovS ? hovL : selS ? selL : undefined;
+    this.plusFor = holding ? null : (plusLine?.id ?? null);
+    place(ov.plus, holding ? null : (hovS?.mid ?? selS?.mid));
+    place(ov.ends[0], !holding ? selS?.a : null);
+    // A parent line's child end stays: it's the child's place. Its topic end moves.
+    place(ov.ends[1], !holding && selL?.kind === 'cross' ? selS?.b : null);
+
+    const n = this.editNode ? this.nodes.get(this.editNode) : undefined;
+    let dotAt: Pt | null = null;
+    if (n && n.x !== undefined && !holding && !this.connectFrom) {
+      const c = this.screenOf(n.x, n.y, n.z);
+      if (c) {
+        const k = this.el.clientHeight / 2 / Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
+        const dist = this.camera.position.distanceTo(new THREE.Vector3(n.x, n.y, n.z));
+        const r = ((n.r * Math.max(n.v?.s ?? 1, 0.2)) / Math.max(dist, 1)) * k;
+        const o = Math.max(r * 0.72, 7) + 9;
+        dotAt = { x: c.x + o, y: c.y - o };
+      }
+    }
+    place(ov.dot, dotAt);
+
+    const anchor = holding ? holding.from : this.connectFrom;
+    const m = anchor ? this.nodes.get(anchor) : undefined;
+    const from = m && m.x !== undefined && this.pointer.inside ? this.screenOf(m.x, m.y, m.z) : null;
+    const rect = this.el.getBoundingClientRect();
+    setLine(ov.rubber, from, from ? { x: this.pointer.x - rect.left, y: this.pointer.y - rect.top } : null);
+  }
+
   private handleClick(id: string, ev: MouseEvent) {
     const t = performance.now();
     if (this.lastClick.id === id && t - this.lastClick.t < 340) {
@@ -532,7 +914,8 @@ export class MapView {
           c++;
         }
         if (!c) continue;
-        const f = pullShare(c);
+        const f = pullShare(c, this.settings.pull);
+        if (f <= 0) continue;
         const py = parent.y ?? 0;
         const pz = parent.z ?? 0;
         const tx = parent.x + f * (cx / c - parent.x);
@@ -548,6 +931,26 @@ export class MapView {
       nodes = ns;
     };
     return force;
+  }
+
+  /** Topics push apart, articles orbit their topic, connections pull (see
+   * pullForce). Spacing from the edit screen scales all of it. */
+  private applyForces() {
+    const sp = this.settings.spacing;
+    (this.g.d3Force('link') as any)
+      .distance((l: GLink) => this.linkDistance(l) * sp)
+      .strength((l: GLink) => {
+        if (l.kind === 'cross') return 0;
+        const pulled = this.settings.pull > 0 && (this.pulls.get(end(l.target))?.length ?? 0) > 0;
+        return pulled ? 0.01 : l.kind === 'root' ? 0.3 : 0.7;
+      });
+    // Main topics push each other far apart, so each reads as its own cluster.
+    (this.g.d3Force('charge') as any)
+      .strength(
+        (n: GNode) =>
+          sp * (n.kind === 'root' ? -20 : n.kind === 'topic' ? (n.depth === 1 ? -320 - n.r * 8 : -110 - n.r * 4) : -32),
+      )
+      .distanceMax(520 * sp);
   }
 
   private linkDistance(l: GLink) {
@@ -586,7 +989,7 @@ export class MapView {
     return best;
   }
 
-  private flyTo(center: GNode, others: GNode[], minD: number, maxD: number, ms: number) {
+  private flyTo(center: GNode, others: GNode[], minD: number, maxD: number, ms: number, margin = 1) {
     if (center.x === undefined) return;
     const c = new THREE.Vector3(center.x, center.y, center.z);
     let R = center.r * 1.6;
@@ -594,8 +997,11 @@ export class MapView {
       if (o?.x !== undefined) R = Math.max(R, c.distanceTo(new THREE.Vector3(o.x, o.y, o.z)) + o.r * 1.6 + 6);
     }
     const fov = THREE.MathUtils.degToRad(this.camera.fov);
-    const narrow = Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * this.camera.aspect));
-    const dist = THREE.MathUtils.clamp((R / Math.sin(narrow / 2)) * 1.02, minD, maxD);
+    // Only the part of the screen the panels leave open counts as width.
+    const w = this.el.clientWidth || 1;
+    const open = Math.max(0.3, (w - this.insets.left - this.insets.right) / w);
+    const narrow = Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * this.camera.aspect * open));
+    const dist = THREE.MathUtils.clamp((R / Math.sin(narrow / 2)) * 1.02 * margin, minD, maxD);
     const dir = this.camera.position.clone().sub(this.controls.target);
     if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
     dir.normalize();
@@ -654,6 +1060,7 @@ export class MapView {
 
   /** Recomputes how bright each bubble, label and line should be. */
   private retarget() {
+    if (this.editing) return this.retargetEdit();
     const f = this.focus;
     const sel = this.selected && this.nodes.has(this.selected) ? this.selected : null;
     const hov = this.hover;
@@ -723,6 +1130,54 @@ export class MapView {
     }
   }
 
+  /** Editing: every bubble and label in view; what's selected and what touches it stand out. */
+  private retargetEdit() {
+    const sel = this.editNode && this.nodes.has(this.editNode) ? this.editNode : null;
+    const selN = sel ? this.neighbors.get(sel) : undefined;
+    const selL = this.editLink ? this.links.get(this.editLink) : undefined;
+    const ends = selL ? [end(selL.source), end(selL.target)] : [];
+    const focused = !!(sel || selL);
+    for (const n of this.nodes.values()) {
+      let op = n.kind === 'topic' ? 0.9 : 1;
+      if (focused) {
+        const near =
+          n.id === sel ||
+          selN?.has(n.id) ||
+          (sel && (this.parentOf.get(n.id) === sel || this.parentOf.get(sel) === n.id)) ||
+          ends.includes(n.id);
+        if (!near) op *= 0.5;
+      }
+      if (n.id === this.hover || n.id === this.editTarget || n.id === this.connectFrom) op = 1;
+      if (n.hidden) op *= 0.55;
+      n.opT = op;
+      n.labT = 1;
+      n.haloT =
+        n.id === this.editTarget || n.id === this.dropTarget
+          ? 1
+          : n.id === this.connectFrom
+            ? 0.9
+            : n.id === sel
+              ? 0.7
+              : ends.includes(n.id)
+                ? 0.4
+                : 0;
+    }
+    for (const l of this.links.values()) {
+      l.spark = false;
+      if (l.kind === 'root') {
+        l.opT = 0;
+        continue;
+      }
+      const touches = !!sel && (end(l.source) === sel || end(l.target) === sel);
+      const base = l.kind === 'cross' ? 0.8 : 0.45;
+      l.opT = l.id === this.editLink || l.id === this.hoverLink ? 1 : touches ? 0.95 : focused ? base * 0.55 : base;
+    }
+    if (this.sparkSig !== '') {
+      this.sparkSig = '';
+      this.g.linkDirectionalParticles(0);
+    }
+  }
+
   private tick = (now: number) => {
     this.raf = requestAnimationFrame(this.tick);
     if (this.paused) return;
@@ -737,12 +1192,14 @@ export class MapView {
       if (k >= 1) this.flight = null;
     }
 
-    if (this.hoverDirty && !this.press) {
+    if (this.hoverDirty && !this.press && !this.handle) {
       this.hoverDirty = false;
       const id = this.pointer.inside ? this.pick(this.pointer.x, this.pointer.y) : null;
-      if (id !== this.hover) {
+      const link = this.editing && !id && this.pointer.inside ? this.pickLink(this.pointer.x, this.pointer.y) : null;
+      if (id !== this.hover || link !== this.hoverLink) {
         this.hover = id;
-        this.el.style.cursor = id ? 'pointer' : '';
+        this.hoverLink = link;
+        this.el.style.cursor = id || link ? 'pointer' : this.connectFrom ? 'crosshair' : '';
         this.retarget();
       }
     }
@@ -800,8 +1257,11 @@ export class MapView {
     }
 
     // Drift slowly when nobody's touching anything.
-    const idle = now - Math.max(this.lastInput, this.lastPointer) > 9000 && !this.selected && !this.dragging;
+    const idle =
+      this.drift && !this.editing && now - Math.max(this.lastInput, this.lastPointer) > 9000 && !this.selected && !this.dragging;
     this.controls.autoRotateSpeed += ((idle ? 0.3 : 0) - this.controls.autoRotateSpeed) * 0.02;
     this.controls.autoRotate = this.controls.autoRotateSpeed > 0.004;
+
+    if (this.editing) this.drawOverlay();
   };
 }

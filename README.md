@@ -67,6 +67,27 @@ Readings with bookmarks are **pinned** at the top of the map: click one to go st
 the last place you marked, or the number beside it for all of them. Bookmarked pearls carry a
 small red mark. Bookmarks are yours alone: they're left out of the website.
 
+**Edit screen** (`E`, or **edit** in the bottom bar; only in the app on your computer, never on
+the website). The rest of the interface steps aside and every bubble, label and line is in view:
+
+| Do this | To |
+| --- | --- |
+| click a bubble or a line | see its settings on the right |
+| hover a line, click its **+** | add a bubble in the middle of it (a topic or a reading; on an "inside" line, a topic in between) |
+| drag a selected line's end onto another bubble | re-route the connection (or move a bubble into another topic) |
+| drag the dot on a selected bubble onto another | connect them |
+| drag a bubble onto a topic | move it inside |
+| drag a bubble into open space | pin it there (**let it float** undoes it) |
+| double-click empty space | a new topic right there |
+| `T` / `A` / `C` | new topic / new reading / connect, from what's selected |
+| `Enter` / `Del` / `F` / `L` | rename / delete / fit in view / show or hide layers |
+| `Esc` | step back; with nothing selected, leave |
+
+The **layers** list on the left has every bubble: click one to fly to it, drag one onto a topic
+to move it. With nothing selected the right panel holds the map's own settings: its name, how
+roomy the layout is, how strongly connections pull bubbles away from their topics, pinned
+bubbles, and the idle drift. Every change is one Ctrl+Z away.
+
 **export** in the bottom bar downloads all your notes and summaries (or one topic) as
 Markdown, or a full JSON backup.
 
