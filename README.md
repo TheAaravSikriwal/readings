@@ -66,7 +66,7 @@ Inside a reading, its own bookmarks, terms and references sit at the top of the 
 each section folds away. Headings are found when a reading is first opened: a PDF's own
 bookmarks if it has them, otherwise read off the text (bigger type, numbered titles like
 "6. Contrary Views…" or "(1) The Theological Objection", short lines standing on their own); a
-saved web page's heading tags. Notes and references then sit in folders, one per heading, each
+saved web page's heading tags. Notes and references then sit in folders, one per heading (empty ones too, for getting around), each
 of which folds away; click a folder's name to go to that heading. Exports group quotes the
 same way. The article's card on the map lists its references too.
 

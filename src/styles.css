@@ -3302,3 +3302,24 @@ b.np-cite {
     position: relative;
   }
 }
+
+/* An empty folder: a heading to jump to, ready for what you mark there. */
+.sec-row.sec-empty {
+  margin-top: 3px;
+  margin-bottom: 0;
+}
+.sec-row.sec-empty .sec-title {
+  color: var(--faint);
+  font-weight: 400;
+}
+.sec-row.sec-empty.lvl-1 .sec-title {
+  color: var(--dim);
+}
+.sec-row.sec-empty .sec-title:hover {
+  color: var(--fg);
+}
+.sec-row .ly-caret-space {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}

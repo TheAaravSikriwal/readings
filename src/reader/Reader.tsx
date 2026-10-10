@@ -545,17 +545,23 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
     const out: ReactNode[] = loose.map(render);
     let hideUntil = -1;
     for (let i = 0; i < n; i++) {
-      if (i < hideUntil || !total[i]) continue;
+      // Every heading is a folder, empty or not: a way to get there, and a place for what you mark in it.
+      if (i < hideUntil) continue;
       const k = `${key}${i}`;
       const shut = shutSecs.has(k);
       const lvl = sections[i].level;
+      const holds = total[i] > 0 || endOf(i) > i + 1;
       out.push(
-        <div key={`sec-${k}`} className={`sec-row lvl-${lvl} ${cur === i ? 'here' : ''}`}>
-          <button className={`ly-caret ${shut ? 'closed' : ''}`} onClick={() => toggleSec(k)} aria-label={shut ? 'Open' : 'Close'} />
+        <div key={`sec-${k}`} className={`sec-row lvl-${lvl} ${cur === i ? 'here' : ''} ${total[i] ? '' : 'sec-empty'}`}>
+          {holds ? (
+            <button className={`ly-caret ${shut ? 'closed' : ''}`} onClick={() => toggleSec(k)} aria-label={shut ? 'Open' : 'Close'} />
+          ) : (
+            <span className="ly-caret-space" />
+          )}
           <button className="sec-title" onClick={() => goToSection(i)} title="Go to this heading">
             {sections[i].title}
           </button>
-          <span className="sec-count">{total[i]}</span>
+          {total[i] > 0 && <span className="sec-count">{total[i]}</span>}
         </div>,
       );
       if (shut) {
