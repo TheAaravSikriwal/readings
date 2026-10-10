@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-export type MarkMode = 'highlight' | 'note' | 'definition';
+export type MarkMode = 'highlight' | 'note' | 'definition' | 'reference';
 
 interface Props {
   x: number;
@@ -9,10 +9,10 @@ interface Props {
   onDismiss: () => void;
 }
 
-const KEYS: Record<string, MarkMode> = { h: 'highlight', n: 'note', d: 'definition' };
+const KEYS: Record<string, MarkMode> = { h: 'highlight', n: 'note', d: 'definition', r: 'reference' };
 
 /** Floats next to a text selection: highlight it (H), attach a note to it (N),
- * or save it as a term and its definition (D). */
+ * save it as a term and its definition (D), or log it as a reference to read (R). */
 export function SelectionPop({ x, y, onPick, onDismiss }: Props) {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -35,7 +35,7 @@ export function SelectionPop({ x, y, onPick, onDismiss }: Props) {
   return (
     <div
       className="selpop"
-      style={{ left: Math.min(x, window.innerWidth - 300), top: Math.min(Math.max(8, y), window.innerHeight - 50) }}
+      style={{ left: Math.min(x, window.innerWidth - 400), top: Math.min(Math.max(8, y), window.innerHeight - 50) }}
       onMouseDown={(e) => e.preventDefault()}
       onMouseUp={(e) => e.stopPropagation()}
     >
@@ -47,6 +47,9 @@ export function SelectionPop({ x, y, onPick, onDismiss }: Props) {
       </button>
       <button onClick={() => onPick('definition')}>
         define <kbd>D</kbd>
+      </button>
+      <button onClick={() => onPick('reference')}>
+        reference <kbd>R</kbd>
       </button>
     </div>
   );

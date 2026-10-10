@@ -105,7 +105,7 @@ export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCre
         start = full.indexOf(h.text);
         end = start + h.text.length;
       }
-      const kindClass = h.kind === 'note' ? ' note' : h.kind === 'definition' ? ' def' : '';
+      const kindClass = h.kind === 'note' ? ' note' : h.kind === 'definition' ? ' def' : h.kind === 'reference' ? ' cite' : '';
       if (start >= 0) wrap(el, start, end, h.id, `hl${kindClass}${h.id === active ? ' on' : ''}`);
     }
     placeMarkers(el, highlights, active);

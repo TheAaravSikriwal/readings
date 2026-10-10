@@ -1,15 +1,16 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { attachPdf, importPdf, looksLikeUrl } from './importer';
 import { MapCanvas } from './map/MapCanvas';
+import { glossary, guessCite, referenceList } from './notes';
 import { actions, EDITABLE, getState, useStore } from './store';
 import { AddMaterial, type AddSeed } from './ui/AddMaterial';
 import { Card, CARD_WIDTH } from './ui/Card';
 import { ContextMenu, type MenuAction } from './ui/ContextMenu';
 import { ExportSheet } from './ui/ExportSheet';
-import { Glossary } from './ui/Glossary';
 import { PublishSheet } from './ui/PublishSheet';
 import { Palette, type PaletteMode } from './ui/Palette';
 import { Prompt, type PromptSpec } from './ui/Prompt';
+import { Shelf, type ShelfPart } from './ui/Shelf';
 import { TopBar } from './ui/TopBar';
 
 const Reader = lazy(() => import('./reader/Reader'));
@@ -24,8 +25,17 @@ const start = fromHash();
 const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
 const typing = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('input, textarea, [contenteditable]');
 
+/** The glossary and the references on the map: open unless you put them away. */
+const shelfOpen = (part: ShelfPart) => {
+  try {
+    return localStorage.getItem(part) !== 'closed';
+  } catch {
+    return true;
+  }
+};
+
 export default function App() {
-  const { tree, lib, loaded, error, toast } = useStore();
+  const { tree, lib, rev, loaded, error, toast } = useStore();
   const [focusId, setFocus] = useState<string | null>(start.t);
   const [selectedId, setSelected] = useState<string | null>(start.a);
   const [readingId, setReading] = useState<string | null>(start.r ? start.a : null);
@@ -37,15 +47,14 @@ export default function App() {
   const [addDrop, setAddDrop] = useState<{ file: File; n: number } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [glossOpen, setGlossOpen] = useState(() => {
-    try {
-      return localStorage.getItem('glossary') !== 'closed';
-    } catch {
-      return true;
-    }
-  });
-  /* A definition to scroll to when the reader opens from the glossary. */
+  const [shelf, setShelf] = useState(() => ({ glossary: shelfOpen('glossary'), references: shelfOpen('references') }));
+  const terms = useMemo(() => glossary(lib), [lib, rev]); // eslint-disable-line react-hooks/exhaustive-deps
+  const refs = useMemo(() => referenceList(lib), [lib, rev]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shelfUp = (shelf.glossary && terms.length > 0) || (shelf.references && refs.length > 0);
+  /* A definition or reference to scroll to when the reader opens from the map. */
   const [readHl, setReadHl] = useState<string | null>(null);
+  /* A bookmark to go to when the reader opens from a pin. */
+  const [readBm, setReadBm] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 680px)').matches);
 
   useEffect(() => {
@@ -103,6 +112,20 @@ export default function App() {
     window.addEventListener('hashchange', back);
     return () => window.removeEventListener('hashchange', back);
   }, []);
+
+  /** A reference to read next: the add sheet, filled in from the citation, and
+   * the new reading connected to the one that cites it. */
+  const addReference = (articleId: string, highlightId: string) => {
+    const h = tree.article(articleId)?.highlights.find((x) => x.id === highlightId);
+    if (!h) return;
+    const g = guessCite(h.cite || h.text);
+    setAdding({
+      url: g.url,
+      topic: tree.parentOf(articleId),
+      fields: { title: g.title, authors: g.authors ?? '', year: g.year ?? '' },
+      cites: { articleId, highlightId, title: tree.get(articleId)?.title ?? '' },
+    });
+  };
 
   const up = () => {
     if (selected) setSelected(null);
@@ -293,6 +316,12 @@ export default function App() {
         onGo={open}
         onRename={rename}
         onConnect={(from) => setPalette({ kind: 'connect', from })}
+        onReadBookmark={(articleId, bookmarkId) => {
+          open(articleId);
+          setReadHl(null);
+          setReadBm(bookmarkId);
+          setReading(articleId);
+        }}
       />
 
       {selected && !reading && (
@@ -301,6 +330,12 @@ export default function App() {
           onRead={() => setReading(selected)}
           onConnect={() => setPalette({ kind: 'connect', from: selected })}
           onOpen={open}
+          onReadAt={(hid) => {
+            setReadBm(null);
+            setReadHl(hid);
+            setReading(selected);
+          }}
+          onAddReference={addReference}
           onClose={() => setSelected(null)}
         />
       )}
@@ -350,26 +385,31 @@ export default function App() {
       </div>
 
       {!reading && (
-        <Glossary
-          open={glossOpen}
-          onToggle={() => {
-            const next = !glossOpen;
-            setGlossOpen(next);
+        <Shelf
+          terms={terms}
+          refs={refs}
+          open={shelf}
+          onToggle={(part) => {
+            const next = { ...shelf, [part]: !shelf[part] };
+            setShelf(next);
             try {
-              localStorage.setItem('glossary', next ? 'open' : 'closed');
+              localStorage.setItem(part, next[part] ? 'open' : 'closed');
             } catch {
               // private mode
             }
           }}
           onOpenSource={(s) => {
             open(s.articleId);
+            setReadBm(null);
             setReadHl(s.highlightId);
             setReading(s.articleId);
           }}
+          onAddReference={addReference}
+          onShow={open}
         />
       )}
 
-      {!empty && !glossOpen && (
+      {!empty && !shelfUp && (
         <div className="hint">
           {EDITABLE
             ? 'click to open · double-click to read · drag onto a topic to move · shift-click to connect · right-click for more'
@@ -389,7 +429,13 @@ export default function App() {
             setAdding(null);
             setAddDrop(null);
           }}
-          onAdded={open}
+          onAdded={(id) => {
+            const from = adding.cites;
+            if (!from) return open(id);
+            actions.linkReference(from.articleId, from.highlightId, id);
+            if (reading) actions.toast(`Added to the map, connected to “${from.title}”`);
+            else open(id);
+          }}
         />
       )}
       {exporting && <ExportSheet focus={focus} onClose={() => setExporting(false)} />}
@@ -400,9 +446,18 @@ export default function App() {
           <Reader
             id={reading}
             focusHighlight={readHl}
+            focusBookmark={readBm}
+            onAddReference={addReference}
+            onOpenReading={(id) => {
+              open(id);
+              setReadHl(null);
+              setReadBm(null);
+              setReading(id);
+            }}
             onClose={() => {
               setReading(null);
               setReadHl(null);
+              setReadBm(null);
             }}
           />
         </Suspense>

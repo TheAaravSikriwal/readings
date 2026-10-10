@@ -1,10 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fileUrl } from '../api';
 import { attachPdf, fetchInto } from '../importer';
-import { articleMarkdown, download, exportName, glossary, hasNote, isDefinition, sortNotes } from '../notes';
+import {
+  articleMarkdown,
+  citeLink,
+  cleanCite,
+  download,
+  exportName,
+  glossary,
+  hasNote,
+  isDefinition,
+  isReference,
+  referenceList,
+  scholarUrl,
+  sortNotes,
+} from '../notes';
 import type { MarkMode } from './SelectionPop';
 import { actions, EDITABLE, useStore } from '../store';
-import type { Highlight } from '../types';
+import type { Bookmark, Highlight } from '../types';
+import { BookmarkPop, bookmarkPlace } from './BookmarkPop';
 import { Edit } from '../ui/Edit';
 import { HtmlDoc } from './HtmlDoc';
 import { NotePop } from './NotePop';
@@ -50,9 +64,28 @@ interface ReaderProps {
   onClose: () => void;
   /** A highlight to scroll to once the document is open (from the glossary). */
   focusHighlight?: string | null;
+  /** Start a new reading from one of this reading's references. */
+  onAddReference?: (articleId: string, highlightId: string) => void;
+  /** Open another reading (a reference that is already on the map). */
+  onOpenReading?: (id: string) => void;
+  /** A bookmark to go to once the document is open (from the pins on the map). */
+  focusBookmark?: string | null;
 }
 
-export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
+/** Where a bookmark sits: the line you're on, a little below the top of the view. */
+const READING_LINE = 0.18;
+
+/** Which side-panel sections are folded away, remembered between readings. */
+type Fold = { terms?: boolean; refs?: boolean; marks?: boolean };
+const savedFold = (): Fold => {
+  try {
+    return JSON.parse(pref.get('rail-fold') ?? '{}') ?? {};
+  } catch {
+    return {};
+  }
+};
+
+export default function Reader({ id, onClose, focusHighlight, onAddReference, onOpenReading, focusBookmark }: ReaderProps) {
   const { tree, lib, pending } = useStore();
   const a = tree.article(id);
   const [active, setActive] = useState<string | null>(null);
@@ -70,9 +103,21 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
   const picker = useRef<HTMLInputElement>(null);
 
   const highlights = a?.highlights ?? [];
-  const sorted = useMemo(() => sortNotes(highlights.filter((h) => !isDefinition(h))), [highlights]);
+  const sorted = useMemo(() => sortNotes(highlights.filter((h) => !isDefinition(h) && !isReference(h))), [highlights]);
   const terms = useMemo(() => (a ? glossary(lib, a.id) : []), [lib, a, highlights]); // eslint-disable-line react-hooks/exhaustive-deps
+  const refs = useMemo(() => (a ? referenceList(lib, a.id) : []), [lib, a, highlights]); // eslint-disable-line react-hooks/exhaustive-deps
   const [openTerm, setOpenTerm] = useState<string | null>(null);
+  const bookmarks = useMemo(() => a?.bookmarks ?? [], [a?.bookmarks]);
+  const [bmPop, setBmPop] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [spots, setSpots] = useState<Record<string, { top: number; left: number; width: number }>>({});
+  const [layoutTick, setLayoutTick] = useState(0);
+  const [fold, setFold] = useState<Fold>(savedFold);
+  const toggleFold = (k: keyof Fold) =>
+    setFold((f) => {
+      const next = { ...f, [k]: !f[k] };
+      pref.set('rail-fold', JSON.stringify(next));
+      return next;
+    });
 
   // Opened from the glossary: go to that definition.
   useEffect(() => {
@@ -107,7 +152,10 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
     };
     const later = () => {
       clearTimeout(timer);
-      timer = window.setTimeout(update, 120);
+      timer = window.setTimeout(() => {
+        update();
+        setLayoutTick((t) => t + 1);
+      }, 120);
     };
     el.addEventListener('scroll', update, { passive: true });
     const ro = new ResizeObserver(later);
@@ -178,6 +226,84 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
     return () => clearTimeout(t);
   }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- bookmarks: a red ribbon on the page, as many as you like
+
+  /** The page (or article) a bookmark sits in, as laid out right now. */
+  const boxOf = useCallback((b: { p?: number }) => {
+    const el = scroller.current;
+    if (!el) return null;
+    const box =
+      b.p !== undefined ? el.querySelector<HTMLElement>(`.pdf-page[data-page="${b.p}"]`) : el.querySelector<HTMLElement>('.snapshot');
+    return box && box.offsetHeight ? box : null;
+  }, []);
+
+  useLayoutEffect(() => {
+    const next: typeof spots = {};
+    for (const b of bookmarks) {
+      const box = boxOf(b);
+      if (box) next[b.id] = { top: box.offsetTop + b.y * box.offsetHeight, left: box.offsetLeft, width: box.offsetWidth };
+    }
+    setSpots(next);
+  }, [bookmarks, layoutTick, zoom, focus, kind, boxOf]);
+
+  const goToBookmark = useCallback(
+    (b: Bookmark, behavior: ScrollBehavior = 'smooth') => {
+      const el = scroller.current;
+      const box = boxOf(b);
+      if (!el || !box) return false;
+      el.scrollTo({ top: box.offsetTop + b.y * box.offsetHeight - el.clientHeight * READING_LINE, behavior });
+      return true;
+    },
+    [boxOf],
+  );
+
+  /** B: leave a bookmark on the line you're reading, ready to label. */
+  const placeBookmark = useCallback(() => {
+    const el = scroller.current;
+    if (!el || !kind || !EDITABLE) return;
+    const line = el.scrollTop + el.clientHeight * READING_LINE;
+    const box =
+      kind === 'pdf'
+        ? [...el.querySelectorAll<HTMLElement>('.pdf-page')].find((pg) => pg.offsetTop + pg.offsetHeight > line) ?? null
+        : el.querySelector<HTMLElement>('.snapshot');
+    if (!box || !box.offsetHeight) return;
+    const p = kind === 'pdf' ? Number(box.dataset.page) : undefined;
+    const y = Math.max(0, Math.min(1, (line - box.offsetTop) / box.offsetHeight));
+    // Pressing B on a line that already has one opens that one.
+    const near = bookmarks.find((b) => b.p === p && Math.abs(b.y - y) < 0.03);
+    const bid = near?.id ?? actions.addBookmark(id, { p, y });
+    const r = el.getBoundingClientRect();
+    setBmPop({
+      id: bid,
+      x: r.left + box.offsetLeft + box.offsetWidth - el.scrollLeft,
+      y: r.top + box.offsetTop + y * box.offsetHeight - el.scrollTop,
+    });
+  }, [kind, bookmarks, id]);
+
+  // Opened from a pin on the map: go to that bookmark once the pages are laid out.
+  useEffect(() => {
+    if (!focusBookmark) return;
+    const b = bookmarks.find((x) => x.id === focusBookmark);
+    if (!b) return;
+    let tries = 0;
+    let t = 0;
+    const go = () => {
+      const el = scroller.current;
+      const ready = !!el && (kind === 'pdf' ? !!el.querySelector('.pdf-page canvas') : !!el.querySelector('.snapshot')?.textContent);
+      if (ready && goToBookmark(b, 'auto')) {
+        // Once more after the page has settled (fonts, late images, the first page jump).
+        t = window.setTimeout(() => goToBookmark(b, 'auto'), 450);
+        return;
+      }
+      if (++tries < 60) t = window.setTimeout(go, 100);
+    };
+    go();
+    return () => clearTimeout(t);
+  }, [focusBookmark]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const marksInOrder = useMemo(() => [...bookmarks].sort((x, y) => (x.p ?? 0) - (y.p ?? 0) || x.y - y.y), [bookmarks]);
+  const bmPopped = bmPop ? bookmarks.find((b) => b.id === bmPop.id) : undefined;
+
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input, textarea, select')) return;
@@ -186,12 +312,16 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') (e.preventDefault(), goTo(current() - 1));
       if (e.key === 'f' || e.key === 'F') toggleFocus();
       if (e.key === 'w' || e.key === 'W') cyclePaper();
+      if ((e.key === 'b' || e.key === 'B') && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault(); // or the b lands in the label box that opens
+        placeBookmark();
+      }
       if (kind === 'pdf' && (e.key === '=' || e.key === '+')) setZoom((z) => Math.min(2.5, z + 0.15));
       if (kind === 'pdf' && e.key === '-') setZoom((z) => Math.max(0.5, z - 0.15));
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [onClose, kind, goTo, page.n, focus, toggleFocus]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [onClose, kind, goTo, page.n, focus, toggleFocus, placeBookmark]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // In focus mode the page counter and the pointer get out of the way when
   // nothing is moving.
@@ -227,7 +357,9 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
           ? { ...h, kind: 'note' }
           : mode === 'definition'
             ? { ...h, kind: 'definition', term: short ? h.text : '', note: short ? '' : h.text }
-            : h,
+            : mode === 'reference'
+              ? { ...h, kind: 'reference', cite: cleanCite(h.text) }
+              : h,
       );
       setActive(hid);
       // Every kind opens its box ready to type: a highlight's note is optional,
@@ -250,6 +382,9 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
       actions.updateHighlight(id, popped.id, { kind: undefined, term: undefined });
       if (popped.note.trim() === popped.text.trim()) actions.updateHighlight(id, popped.id, { note: '' });
     }
+    // Likewise a reference that never said what it cites.
+    if (popped?.kind === 'reference' && !popped.cite?.trim())
+      actions.updateHighlight(id, popped.id, { kind: undefined, cite: undefined });
     setPop(null);
   }, [popped, id]);
 
@@ -320,6 +455,15 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
               </button>
             </>
           )}
+          {kind && EDITABLE && (
+            <>
+              <span className="tool-sep" />
+              <button className="ghost bm-btn" onClick={placeBookmark} title="Bookmark the line you're on (B)">
+                <span className="bm-glyph" />
+                bookmark
+              </button>
+            </>
+          )}
           {kind && (
             <>
               <span className="tool-sep" />
@@ -354,6 +498,29 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
       <div className={`r-body ${notesOnly ? 'notes-only' : ''}`}>
         {!notesOnly && (
           <main className="r-doc" ref={scroller} onClick={turn}>
+            {marksInOrder.length > 0 && (
+              <div className="bm-layer">
+                {marksInOrder.map((b) => {
+                  const s = spots[b.id];
+                  if (!s) return null;
+                  return (
+                    <Fragment key={b.id}>
+                      <div className="bm-line" style={{ top: s.top, left: s.left, width: s.width }} />
+                      <button
+                        className={`bm ${bmPop?.id === b.id ? 'on' : ''}`}
+                        style={{ top: s.top - 6, left: s.left + s.width - 7 }}
+                        title={b.label || 'Bookmark'}
+                        aria-label={`Bookmark${b.label ? `: ${b.label}` : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setBmPop({ id: b.id, x: e.clientX, y: e.clientY });
+                        }}
+                      />
+                    </Fragment>
+                  );
+                })}
+              </div>
+            )}
             {kind === 'pdf' && (
               <PdfDoc
                 url={fileUrl(a.file!)}
@@ -413,17 +580,45 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
               <p className="faint">{[a.authors, a.year, a.site].filter(Boolean).join(' · ')}</p>
             </div>
           )}
+          {marksInOrder.length > 0 && (
+            <section className={`marks ${fold.marks ? 'folded' : ''}`}>
+              <button className="fold-head" onClick={() => toggleFold('marks')} aria-expanded={!fold.marks}>
+                <h4>
+                  Bookmarks <span className="faint">{marksInOrder.length}</span>
+                </h4>
+                <span className="fold-caret" />
+              </button>
+              {!fold.marks &&
+                marksInOrder.map((b) => (
+                  <div key={b.id} className={`bm-item ${bmPop?.id === b.id ? 'on' : ''}`}>
+                    <button className="bm-go" onClick={() => goToBookmark(b)}>
+                      <span className="bm-glyph" />
+                      <span className="mono faint">{bookmarkPlace(b)}</span>
+                      <span className="bm-label">{b.label || <span className="faint">no label</span>}</span>
+                    </button>
+                    {EDITABLE && (
+                      <button className="icon faint" onClick={() => actions.removeBookmark(id, b.id)} aria-label="Remove bookmark">
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
+            </section>
+          )}
           <section>
             <h4>Summary</h4>
             <Edit multiline value={a.summary} onChange={(summary) => actions.update(id, { summary })} placeholder="The point, in your words…" />
             {!EDITABLE && !a.summary && <p className="faint">—</p>}
           </section>
           {(terms.length > 0 || (EDITABLE && kind)) && (
-            <section className="terms">
-              <h4>
-                Terms <span className="faint">{terms.length || ''}</span>
-              </h4>
-              {terms.length ? (
+            <section className={`terms ${fold.terms ? 'folded' : ''}`}>
+              <button className="fold-head" onClick={() => toggleFold('terms')} aria-expanded={!fold.terms}>
+                <h4>
+                  Terms <span className="faint">{terms.length || ''}</span>
+                </h4>
+                <span className="fold-caret" />
+              </button>
+              {fold.terms ? null : terms.length ? (
                 <div className="term-chips">
                   {terms.map((t) => (
                     <button
@@ -446,7 +641,8 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
               ) : (
                 <p className="faint">Select a word and press D to define it. Every term you define also goes in the glossary on the map.</p>
               )}
-              {terms
+              {!fold.terms &&
+                terms
                 .filter((t) => t.key === openTerm)
                 .map((t) => (
                   <div key={t.key} className="term-open">
@@ -465,6 +661,61 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
                       </button>
                     )}
                   </div>
+                ))}
+            </section>
+          )}
+          {(refs.length > 0 || (EDITABLE && kind)) && (
+            <section className={`refs ${fold.refs ? 'folded' : ''}`}>
+              <button className="fold-head" onClick={() => toggleFold('refs')} aria-expanded={!fold.refs}>
+                <h4>
+                  References <span className="faint">{refs.length || ''}</span>
+                </h4>
+                <span className="fold-caret" />
+              </button>
+              {!fold.refs &&
+                (refs.length ? (
+                  refs.map((r) => {
+                    const src = r.sources[0];
+                    const link = citeLink(r.cite);
+                    const note = r.sources.map((x) => x.note).filter(Boolean).join(' ');
+                    return (
+                      <div key={r.key} data-h={src.highlightId} className={`ref-item ${active === src.highlightId ? 'on' : ''}`}>
+                        <button
+                          className="ref-cite"
+                          onClick={(e) => {
+                            setActive(src.highlightId);
+                            setJump({ id: src.highlightId, n: Date.now() });
+                            if (EDITABLE) setPop({ id: src.highlightId, x: e.clientX - 320, y: e.clientY - 10 });
+                          }}
+                        >
+                          {r.cite}
+                        </button>
+                        {note && <p className="ref-note">{note}</p>}
+                        <div className="ref-actions">
+                          {src.page !== undefined && <span className="faint">p. {src.page + 1}</span>}
+                          {r.onMap ? (
+                            <button className="ghost tiny" onClick={() => onOpenReading?.(r.onMap!)}>
+                              on the map →
+                            </button>
+                          ) : (
+                            EDITABLE &&
+                            onAddReference && (
+                              <button className="ghost tiny" onClick={() => onAddReference(id, src.highlightId)}>
+                                + add to map
+                              </button>
+                            )
+                          )}
+                          <a className="ghost tiny" href={link ?? scholarUrl(r.cite)} target="_blank" rel="noreferrer">
+                            {link ? 'open ↗' : 'find ↗'}
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="faint">
+                    Select a citation, in the text or in the reference list, and press R. It goes on your reading list on the map.
+                  </p>
                 ))}
             </section>
           )}
@@ -537,6 +788,21 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
         </div>
       )}
 
+      {bmPop && bmPopped && (
+        <BookmarkPop
+          b={bmPopped}
+          x={bmPop.x}
+          y={bmPop.y}
+          editable={EDITABLE}
+          onLabel={(label) => actions.updateBookmark(id, bmPopped.id, { label })}
+          onRemove={() => {
+            actions.removeBookmark(id, bmPopped.id);
+            setBmPop(null);
+          }}
+          onClose={() => setBmPop(null)}
+        />
+      )}
+
       {pop && popped && (
         <NotePop
           h={popped}
@@ -545,6 +811,7 @@ export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
           editable={EDITABLE}
           onChange={(note) => actions.updateHighlight(id, popped.id, { note })}
           onTerm={(term) => actions.updateHighlight(id, popped.id, { term })}
+          onCite={(cite) => actions.updateHighlight(id, popped.id, { cite })}
           onRemove={() => {
             actions.removeHighlight(id, popped.id);
             setPop(null);

@@ -16,9 +16,14 @@ export interface Highlight {
   /** 'note' = a line you annotated (drawn as an underline, not a highlight band).
    * 'definition' = a term and what it means; `note` holds the definition.
    * Definitions from every reading make up the glossary (src/notes.ts). */
-  kind?: 'note' | 'definition';
+  kind?: 'note' | 'definition' | 'reference';
   /** The word or phrase a definition defines. */
   term?: string;
+  /** A reference: the cited work as the paper gives it. References from every
+   * reading make up the reading list (src/notes.ts). */
+  cite?: string;
+  /** A reference that has been added to the map: the reading it became. */
+  linked?: string;
   /** PDF highlights */
   rects?: Rect[];
   /** Web snapshot highlights: character offsets into the snapshot text */
@@ -39,6 +44,17 @@ export interface Topic extends Base {
   note?: string;
 }
 
+/** A place in a reading to come back to. */
+export interface Bookmark {
+  id: string;
+  /** The PDF page (from 0); a web page has none. */
+  p?: number;
+  /** How far down, from 0 to 1: of that page (PDF), or of the whole article (web page). */
+  y: number;
+  label: string;
+  created: string;
+}
+
 export interface Article extends Base {
   type: 'article';
   authors?: string;
@@ -50,6 +66,8 @@ export interface Article extends Base {
   /** Put the file itself on the website too (only for open-access material). */
   share?: boolean;
   summary?: string;
+  /** Places to come back to. A reading with any is pinned on the map. */
+  bookmarks?: Bookmark[];
   highlights: Highlight[];
 }
 

@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+import { citeLink, referenceList, scholarUrl } from '../notes';
 import { actions, EDITABLE, useStore } from '../store';
 import { Edit } from './Edit';
 
@@ -6,15 +8,19 @@ interface Props {
   onRead: () => void;
   onConnect: () => void;
   onOpen: (id: string) => void;
+  /** Open the reader at one of this reading's marks. */
+  onReadAt: (highlightId: string) => void;
+  onAddReference: (articleId: string, highlightId: string) => void;
   onClose: () => void;
 }
 
 export const CARD_WIDTH = 360;
 
 /** The article panel that slides in when you click a pearl. */
-export function Card({ id, onRead, onConnect, onOpen, onClose }: Props) {
-  const { tree, lib, pending } = useStore();
+export function Card({ id, onRead, onConnect, onOpen, onReadAt, onAddReference, onClose }: Props) {
+  const { tree, lib, rev, pending } = useStore();
   const a = tree.article(id);
+  const refs = useMemo(() => referenceList(lib, id), [lib, rev, id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!a) return null;
 
   const links = lib.links
@@ -84,6 +90,41 @@ export function Card({ id, onRead, onConnect, onOpen, onClose }: Props) {
         <Edit multiline value={a.summary} onChange={(summary) => set({ summary })} placeholder="The point, in your words…" />
         {!EDITABLE && !a.summary && <p className="faint">—</p>}
       </section>
+
+      {refs.length > 0 && (
+        <section className="card-refs">
+          <h4>
+            References <span className="faint">{refs.length}</span>
+          </h4>
+          {refs.map((r) => {
+            const src = r.sources[0];
+            const link = citeLink(r.cite);
+            return (
+              <div key={r.key} className="card-ref">
+                <button className="ref-cite" onClick={() => onReadAt(src.highlightId)} title="Show it in the text">
+                  {r.cite}
+                </button>
+                <div className="ref-actions">
+                  {r.onMap ? (
+                    <button className="ghost tiny" onClick={() => onOpen(r.onMap!)}>
+                      on the map →
+                    </button>
+                  ) : (
+                    EDITABLE && (
+                      <button className="ghost tiny" onClick={() => onAddReference(id, src.highlightId)}>
+                        + add to map
+                      </button>
+                    )
+                  )}
+                  <a className="ghost tiny" href={link ?? scholarUrl(r.cite)} target="_blank" rel="noreferrer">
+                    {link ? 'open ↗' : 'find ↗'}
+                  </a>
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      )}
 
       <section>
         <h4>Connections</h4>

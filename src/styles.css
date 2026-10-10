@@ -1924,12 +1924,29 @@ mark.hl.def.on {
 
 /* ------------------------------------------------------------ glossary */
 
-.gloss,
-.gloss-tab {
+/* The map's corner: the glossary and the references, stacked, each one put
+   away to a small tab of its own. */
+.shelf {
   position: fixed;
   left: 18px;
   bottom: 84px;
   z-index: 15;
+  width: 320px;
+  max-height: min(74vh, 700px, calc(100vh - 84px - var(--top-h, 60px) - 16px));
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+.shelf > * {
+  pointer-events: auto;
+}
+.shelf-tabs {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .gloss-tab {
   border: 1px solid var(--line);
@@ -1948,6 +1965,8 @@ mark.hl.def.on {
   display: flex;
   flex-direction: column;
   width: 320px;
+  min-height: 110px;
+  flex: 0 1 auto;
   max-height: min(56vh, 540px);
   background: var(--panel);
   backdrop-filter: blur(18px);
@@ -2033,16 +2052,391 @@ mark.hl.def.on {
     transform: translateX(-20px);
   }
 }
+.gloss + .gloss {
+  animation-delay: 0.05s;
+}
+.gloss-list {
+  min-height: 0;
+}
 @media (max-width: 680px) {
-  .gloss {
+  .shelf {
     left: 10px;
     right: 10px;
     width: auto;
     bottom: 70px;
-    max-height: 50vh;
+    max-height: min(56vh, calc(100vh - 70px - var(--top-h, 60px) - 12px));
   }
-  .gloss-tab {
-    bottom: 70px;
-    left: 10px;
+}
+
+/* ---------------------------------------------------------- references */
+
+/* In the text: a dashed underline (dotted is a definition, solid a note). */
+.hl-layer .hl.cite {
+  background: transparent;
+  border-bottom: 2px dashed #fff;
+  border-radius: 0;
+}
+.hl-layer .hl.cite.on {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: none;
+}
+mark.hl.cite {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+  border-bottom: 1.5px dashed var(--page-ink);
+}
+mark.hl.cite.on {
+  background: color-mix(in srgb, var(--page-ink) 10%, transparent);
+  outline: 0;
+}
+
+.np-cite {
+  resize: none;
+  font: 15px/1.4 var(--serif);
+  width: 100%;
+}
+b.np-cite {
+  font-weight: 400;
+}
+
+/* Side-panel sections that fold away. */
+.fold-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.fold-head h4 {
+  margin-bottom: 8px;
+}
+.fold-caret {
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 8px 0;
+  border-right: 1px solid var(--faint);
+  border-bottom: 1px solid var(--faint);
+  transform: rotate(45deg);
+  transition: transform 0.2s var(--ease);
+}
+.folded .fold-caret {
+  transform: rotate(-45deg);
+}
+.fold-head:hover .fold-caret,
+.fold-head:hover h4 {
+  border-color: var(--fg);
+  color: var(--dim);
+}
+.folded .fold-head h4 {
+  margin-bottom: 0;
+}
+
+/* One reference: the citation, why it matters, what to do with it. */
+.ref-item,
+.card-ref {
+  padding: 9px 0 7px;
+  border-top: 1px solid var(--line);
+}
+.ref-item:first-of-type,
+.card-ref:first-of-type {
+  border-top: 0;
+  padding-top: 2px;
+}
+.ref-cite {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  color: var(--fg);
+  font: 14px/1.45 var(--serif);
+  cursor: pointer;
+  border-left: 2px dashed transparent;
+}
+.ref-cite:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+}
+.ref-item.on .ref-cite {
+  padding-left: 10px;
+  border-left-color: var(--dim);
+}
+.ref-note,
+.ref-why {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+.ref-actions {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 5px;
+  font-size: 11.5px;
+}
+.ref-actions .ghost.tiny {
+  padding: 0;
+  font-size: 11.5px;
+}
+.ref-actions a.ghost {
+  color: var(--faint);
+  text-decoration: none;
+}
+.ref-actions a.ghost:hover {
+  color: var(--fg);
+}
+
+/* On the map. */
+.ref-text {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  font: 14.5px/1.45 var(--serif);
+}
+.ref-entry.mapped .ref-text {
+  color: var(--dim);
+}
+.ref-entry .gloss-src {
+  margin-top: 5px;
+}
+
+.card-refs .card-ref {
+  padding: 8px 0 6px;
+}
+
+.addm-from {
+  margin: 2px 0 14px;
+  font-size: 12.5px;
+}
+
+/* ----------------------------------------------------------- bookmarks */
+
+/* The one colour in the app: a bookmark is red, like a ribbon in a book. */
+:root {
+  --ribbon: #e5322d;
+}
+.bm-glyph {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 12px;
+  background: var(--ribbon);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%);
+}
+
+/* In the document: the ribbon sticks out of the page's edge at the line. */
+.bm-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 3;
+}
+.bm {
+  position: absolute;
+  width: 14px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: var(--ribbon);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 76%, 0 100%);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 0.18s var(--ease);
+}
+.bm:hover,
+.bm.on {
+  transform: translateY(3px);
+}
+.bm-line {
+  position: absolute;
+  height: 0;
+  border-top: 1px solid color-mix(in srgb, var(--ribbon) 45%, transparent);
+  pointer-events: none;
+}
+.reader.idle .bm-line {
+  border-top-color: color-mix(in srgb, var(--ribbon) 22%, transparent);
+}
+
+.bm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* In the side panel. */
+.bm-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 -8px;
+  padding: 2px 8px;
+  border-radius: 9px;
+}
+.bm-item.on,
+.bm-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.bm-go {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  padding: 6px 0;
+  color: var(--fg);
+  font: 14px var(--serif);
+  text-align: left;
+  cursor: pointer;
+}
+.bm-go .mono {
+  font-size: 11px;
+  min-width: 34px;
+}
+.bm-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bmpop .bm-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.bmpop .np-term-input {
+  width: 100%;
+}
+
+/* Pinned on the map: every reading you've bookmarked, one click back. */
+.pins {
+  grid-column: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: min(720px, calc(100vw - 420px));
+  margin-top: 12px;
+}
+.pin {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(12px);
+  font-size: 12.5px;
+}
+.pin:hover,
+.pin.open {
+  border-color: color-mix(in srgb, var(--ribbon) 55%, var(--line));
+}
+.pin-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  background: none;
+  border: 0;
+  padding: 5px 12px 6px 11px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.pin-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--serif);
+  font-size: 13.5px;
+}
+.pin-main .mono {
+  font-size: 10.5px;
+}
+.pin-more {
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--line);
+  padding: 0 10px 0 9px;
+  color: var(--dim);
+  font: 11px var(--mono);
+  cursor: pointer;
+}
+.pin-more:hover {
+  color: var(--fg);
+}
+.pin-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 50vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: var(--panel);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  z-index: 30;
+}
+.pin-list button {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: var(--fg);
+  font: 13.5px var(--serif);
+  text-align: left;
+  cursor: pointer;
+}
+.pin-list button:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.pin-list .mono {
+  font-size: 10.5px;
+  min-width: 34px;
+}
+
+/* On the map, a bookmarked pearl's label carries the ribbon. */
+.nlabel.marked span::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 9px;
+  margin-right: 6px;
+  vertical-align: -0.5px;
+  background: var(--ribbon);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%);
+}
+
+@media (max-width: 680px) {
+  .pins {
+    max-width: calc(100vw - 44px);
+  }
+  .pin-main {
+    max-width: 180px;
   }
 }

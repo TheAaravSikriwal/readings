@@ -38,6 +38,8 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 | select text → **highlight** (`H`) | highlight it |
 | select text → **note** (`N`) | attach a note to that line (a dot appears in the margin) |
 | select text → **define** (`D`) | save a term and its definition. Select just the term and write what it means, or select a defining passage and name the term. It gets a dotted underline |
+| select text → **reference** (`R`) | log a work the paper cites, to read next. Select the entry in its reference list, or an in-text citation like "[12]" and type what it cites. Then say why it's worth following, or just press Enter. It gets a dashed underline |
+| **bookmark** (`B`) | leave a red bookmark on the line you're reading, and label it if you like. As many as you want per reading |
 | click a highlight or margin dot | read or edit its note |
 | **+ note** in the side panel | a note about the whole reading |
 | `←` `→`, PgUp/PgDn, or the ‹ › pager | previous / next page |
@@ -45,10 +47,25 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 | **paper** (`W`) | page colour: white, warm or dark |
 | **export** | this article's summary and notes as Markdown |
 
+After any mark the box opens ready to type: Enter finishes, so you rarely need the mouse.
+
 Every definition goes into the **glossary** on the map (bottom left): one entry per term
 across all your readings. The same term spelled differently (case, plural) is still one entry;
-different definitions of it are listed under it with where each came from. A reading's own
-terms sit in a row at the top of its side panel.
+different definitions of it are listed under it with where each came from.
+
+Every reference goes into **references**, beside the glossary: your reading list. Each work is
+listed once, with the readings that cite it and why. The ones you haven't read come first; a
+reference counts as on the map once a reading with its title is there. **+ add to map** opens
+the add form filled in from the citation: with a DOI or arXiv link it fetches the paper itself.
+It goes in the citing reading's topic, connected to it. **find ↗** searches Google Scholar.
+Glossary and references each hide with ×, and come back from their tab.
+
+Inside a reading, its own bookmarks, terms and references sit at the top of the side panel;
+each section folds away. The article's card on the map lists its references too.
+
+Readings with bookmarks are **pinned** at the top of the map: click one to go straight back to
+the last place you marked, or the number beside it for all of them. Bookmarked pearls carry a
+small red mark. Bookmarks are yours alone: they're left out of the website.
 
 **export** in the bottom bar downloads all your notes and summaries (or one topic) as
 Markdown, or a full JSON backup.

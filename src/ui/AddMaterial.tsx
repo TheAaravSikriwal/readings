@@ -20,6 +20,10 @@ export interface AddSeed {
   file?: File;
   url?: string;
   topic?: string | null;
+  /** Details known up front (from a citation), which anything fetched replaces. */
+  fields?: Partial<Fields>;
+  /** Added from a reference: the reading that cites it. */
+  cites?: { articleId: string; highlightId: string; title: string };
 }
 
 interface Props {
@@ -41,10 +45,10 @@ const MODES: { mode: Mode; title: string; hint: string }[] = [
 export function AddMaterial({ seed, topic: here, dropped, onClose, onAdded }: Props) {
   const { tree, lib } = useStore();
   const id = useMemo(() => uid('a'), []);
-  const [mode, setMode] = useState<Mode | null>(seed.file ? 'pdf' : seed.url ? 'link' : null);
+  const [mode, setMode] = useState<Mode | null>(seed.file ? 'pdf' : seed.url ? 'link' : seed.fields ? 'none' : null);
   const [file, setFile] = useState<File | null>(seed.file ?? null);
   const [link, setLink] = useState(seed.url ?? '');
-  const [f, setF] = useState<Fields>(BLANK);
+  const [f, setF] = useState<Fields>(() => ({ ...BLANK, ...seed.fields }));
   const [topic, setTopic] = useState<string | null>(seed.topic !== undefined ? seed.topic : here);
   const [status, setStatus] = useState({ busy: false, text: '' });
   const touched = useRef(new Set<keyof Fields>());
@@ -200,6 +204,13 @@ export function AddMaterial({ seed, topic: here, dropped, onClose, onAdded }: Pr
             ×
           </button>
         </div>
+
+        {seed.cites && (
+          <p className="addm-from faint">
+            Cited in “{seed.cites.title}”. It will be connected to it.
+            {mode === 'none' && ' Have a link or the PDF? Switch to Link or PDF.'}
+          </p>
+        )}
 
         {!mode ? (
           <div className="tiles">

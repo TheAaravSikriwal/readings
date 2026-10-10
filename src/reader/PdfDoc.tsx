@@ -296,7 +296,7 @@ function PdfPage({ doc, index, width, base, marks, active, onPick }: PageProps) 
         {marks.map(({ h, r }, k) => (
           <div
             key={`${h.id}-${k}`}
-            className={`hl ${h.kind === 'note' ? 'note' : h.kind === 'definition' ? 'def' : ''} ${active === h.id ? 'on' : ''}`}
+            className={`hl ${h.kind === 'note' ? 'note' : h.kind === 'definition' ? 'def' : h.kind === 'reference' ? 'cite' : ''} ${active === h.id ? 'on' : ''}`}
             style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
           />
         ))}

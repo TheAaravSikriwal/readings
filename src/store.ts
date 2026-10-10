@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
 import { Tree } from './tree';
-import type { Article, Highlight, Library, Link, Topic } from './types';
+import type { Article, Bookmark, Highlight, Library, Link, Topic } from './types';
 
 /** Editing only exists on the local dev server; the built website is read-only. */
 export const EDITABLE = import.meta.env.DEV;
@@ -252,6 +252,39 @@ export const actions = {
       const a = article(articleId);
       if (a) a.highlights = a.highlights.map((x) => (x.id === hid ? { ...x, ...patch } : x));
     }, fieldKey('hl', hid, patch));
+  },
+
+  addBookmark(articleId: string, b: { p?: number; y: number }) {
+    const id = uid('b');
+    commit(() => {
+      const a = article(articleId);
+      if (a) a.bookmarks = [...(a.bookmarks ?? []), { label: '', ...b, id, created: now() }];
+    });
+    return id;
+  },
+
+  updateBookmark(articleId: string, bid: string, patch: Partial<Bookmark>) {
+    commit(() => {
+      const a = article(articleId);
+      if (a) a.bookmarks = (a.bookmarks ?? []).map((x) => (x.id === bid ? { ...x, ...patch } : x));
+    }, fieldKey('bm', bid, patch));
+  },
+
+  removeBookmark(articleId: string, bid: string) {
+    commit(() => {
+      const a = article(articleId);
+      if (a) a.bookmarks = (a.bookmarks ?? []).filter((x) => x.id !== bid);
+    });
+  },
+
+  /** A reference that became a reading: remember which, and connect the two. */
+  linkReference(articleId: string, hid: string, target: string) {
+    commit((lib) => {
+      const a = article(articleId);
+      if (a) a.highlights = a.highlights.map((x) => (x.id === hid ? { ...x, linked: target } : x));
+      if (articleId !== target && !actions.linkBetween(articleId, target))
+        lib.links.push({ id: uid('l'), a: articleId, b: target, note: 'reference' });
+    });
   },
 
   removeHighlight(articleId: string, hid: string) {

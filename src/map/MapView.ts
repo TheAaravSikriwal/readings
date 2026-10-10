@@ -39,6 +39,8 @@ export interface GNode {
   depth: number;
   hidden: boolean;
   annotated: boolean;
+  /** Has bookmarks: its label carries a red ribbon. */
+  marked?: boolean;
   pending: boolean;
   /** brightness targets, set by retarget() and eased toward in tick() */
   opT: number;
@@ -299,6 +301,7 @@ export class MapView {
       g.hidden = !!n.hidden;
       g.pending = pending.has(n.id);
       g.annotated = n.type === 'article' && (n.highlights.length > 0 || !!n.summary?.trim());
+      g.marked = n.type === 'article' && !!n.bookmarks?.length;
       g.r =
         n.type === 'article'
           ? 4.2
@@ -645,6 +648,7 @@ export class MapView {
     const t = shorten(n.title || 'Untitled') + (n.pending ? '  ···' : '');
     if (v.text.textContent !== t) v.text.textContent = t;
     v.labelEl.classList.toggle('private', n.hidden);
+    v.labelEl.classList.toggle('marked', !!n.marked);
     if (n.kind === 'article') v.mat.uniforms.uBright.value = n.annotated ? 1 : 0.6;
   }
 

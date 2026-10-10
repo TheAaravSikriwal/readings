@@ -73,7 +73,7 @@ export function publicLibrary(lib: any) {
     ...lib,
     nodes: lib.nodes
       .filter((n: any) => !hidden.has(n.id))
-      .map(({ hidden: _h, ...n }: any) => (n.share && n.file ? n : { ...n, file: undefined, share: undefined })),
+      .map(({ hidden: _h, bookmarks: _b, ...n }: any) => (n.share && n.file ? n : { ...n, file: undefined, share: undefined })),
     links: lib.links.filter((l: any) => !hidden.has(l.a) && !hidden.has(l.b)),
   };
 }
