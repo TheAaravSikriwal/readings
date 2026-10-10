@@ -3340,8 +3340,8 @@ b.np-cite {
   border-radius: 0;
 }
 .hl-layer.hl-q .hl.on {
-  background: rgba(229, 50, 45, 0.6);
-  box-shadow: 0 0 0 2px var(--ribbon);
+  background: rgba(229, 50, 45, 0.58);
+  box-shadow: none;
 }
 mark.hl.q {
   background: var(--ribbon);
@@ -3361,6 +3361,8 @@ mark.hl.note.q {
 }
 .q-label {
   flex: none;
+  white-space: nowrap;
+  line-height: 1.3;
   padding: 1px 7px 2px;
   border: 1px solid color-mix(in srgb, var(--ribbon) 60%, transparent);
   border-radius: 999px;
@@ -3382,6 +3384,15 @@ mark.hl.note.q {
 .hcard.question.open .hmeta .ghost {
   margin-left: auto;
 }
+/* In the note box, a small pill beside the hint, never stretched to the row. */
+.np-actions {
+  align-items: center;
+}
 .np-actions .q-label {
-  margin-right: auto;
+  align-self: center;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.np-actions .np-hint {
+  min-width: 0;
 }

@@ -134,7 +134,9 @@ export function NotePop({ h, x, y, editable, onChange, onTerm, onCite, onRemove,
               ? 'enter to go to the definition'
               : isRef && !h.cite
                 ? 'enter to go to the note'
-                : 'enter to finish · shift+enter for a new line'}
+                : isQuestion(h)
+                  ? 'enter to finish' // the question label takes the room
+                  : 'enter to finish · shift+enter for a new line'}
           </span>
         )}
         {editable && (
