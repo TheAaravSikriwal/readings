@@ -37,12 +37,18 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 | --- | --- |
 | select text → **highlight** (`H`) | highlight it |
 | select text → **note** (`N`) | attach a note to that line (a dot appears in the margin) |
+| select text → **define** (`D`) | save a term and its definition. Select just the term and write what it means, or select a defining passage and name the term. It gets a dotted underline |
 | click a highlight or margin dot | read or edit its note |
 | **+ note** in the side panel | a note about the whole reading |
 | `←` `→`, PgUp/PgDn, or the ‹ › pager | previous / next page |
 | **focus** (`F`) | full screen, just the page, no edges. Click left/right of it to turn the page |
 | **paper** (`W`) | page colour: white, warm or dark |
 | **export** | this article's summary and notes as Markdown |
+
+Every definition goes into the **glossary** on the map (bottom left): one entry per term
+across all your readings. The same term spelled differently (case, plural) is still one entry;
+different definitions of it are listed under it with where each came from. A reading's own
+terms sit in a row at the top of its side panel.
 
 **export** in the bottom bar downloads all your notes and summaries (or one topic) as
 Markdown, or a full JSON backup.

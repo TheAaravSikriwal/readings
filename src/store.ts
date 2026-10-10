@@ -238,11 +238,11 @@ export const actions = {
     }, fieldKey('link', linkId, patch));
   },
 
-  addHighlight(articleId: string, h: Omit<Highlight, 'id' | 'created' | 'note'>) {
+  addHighlight(articleId: string, h: Omit<Highlight, 'id' | 'created' | 'note'> & { note?: string }) {
     const id = uid('h');
     commit(() => {
       const a = article(articleId);
-      if (a) a.highlights = [...a.highlights, { ...h, id, note: '', created: now() }];
+      if (a) a.highlights = [...a.highlights, { note: '', ...h, id, created: now() }];
     });
     return id;
   },

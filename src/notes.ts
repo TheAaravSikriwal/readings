@@ -7,7 +7,63 @@ export const readingOrder = (h: Highlight) =>
 
 export const sortNotes = (hs: Highlight[]) => [...hs].sort((a, b) => readingOrder(a) - readingOrder(b));
 
-export const hasNote = (h: Highlight) => h.kind === 'note' || !!h.note.trim();
+export const isDefinition = (h: Highlight) => h.kind === 'definition';
+
+/** A line with a note on it (definitions are listed apart, as terms). */
+export const hasNote = (h: Highlight) => !isDefinition(h) && (h.kind === 'note' || !!h.note.trim());
+
+// ---- the glossary: every definition from every reading, one entry per term
+
+/** Two spellings of a term are the same entry when they only differ in case,
+ * spacing, surrounding punctuation or a plural s. */
+export const termKey = (t: string) => {
+  let k = t
+    .toLowerCase()
+    .replace(/[“”"'‘’()[\].,;:!?]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (k.length > 3 && k.endsWith('s') && !k.endsWith('ss')) k = k.slice(0, -1);
+  return k;
+};
+
+/** What a definition says: what you wrote, or the passage you selected when
+ * the passage itself was the definition. */
+export const definitionText = (h: Highlight) =>
+  h.note.trim() || (h.term && termKey(h.text) !== termKey(h.term) ? h.text.trim() : '');
+
+export interface GlossarySource {
+  articleId: string;
+  highlightId: string;
+  title: string;
+  year?: string;
+}
+
+export interface GlossaryEntry {
+  key: string;
+  term: string;
+  /** Different definitions of the term; the same wording from two readings is one, with both as sources. */
+  defs: { text: string; sources: GlossarySource[] }[];
+}
+
+export function glossary(lib: Library, only?: string): GlossaryEntry[] {
+  const entries = new Map<string, GlossaryEntry>();
+  for (const n of lib.nodes) {
+    if (n.type !== 'article' || (only && n.id !== only)) continue;
+    for (const h of n.highlights) {
+      if (!isDefinition(h) || !h.term?.trim()) continue;
+      const key = termKey(h.term);
+      if (!key) continue;
+      let e = entries.get(key);
+      if (!e) entries.set(key, (e = { key, term: h.term.trim(), defs: [] }));
+      const text = definitionText(h);
+      const same = text.toLowerCase().replace(/\s+/g, ' ');
+      let d = e.defs.find((x) => x.text.toLowerCase().replace(/\s+/g, ' ') === same);
+      if (!d) e.defs.push((d = { text, sources: [] }));
+      d.sources.push({ articleId: n.id, highlightId: h.id, title: n.title, year: n.year });
+    }
+  }
+  return [...entries.values()].sort((a, b) => a.term.localeCompare(b.term, undefined, { sensitivity: 'base' }));
+}
 
 const today = () => {
   const d = new Date();
@@ -25,7 +81,13 @@ export function articleMarkdown(a: Article, tree: Tree, lib: Library, level = 2)
   if (meta) out.push('', meta);
   if (a.url) out.push('', `Source: <${a.url}>`);
   if (a.summary?.trim()) out.push('', `**Summary.** ${a.summary.trim()}`);
+  const terms = glossary(lib, a.id);
+  if (terms.length) {
+    out.push('', '**Definitions**', '');
+    for (const t of terms) for (const d of t.defs) out.push(`- **${t.term}**${d.text ? `: ${d.text}` : ''}`);
+  }
   for (const h of sortNotes(a.highlights)) {
+    if (isDefinition(h)) continue;
     const page = h.rects?.length ? ` (p. ${h.rects[0].p + 1})` : '';
     if (h.text) {
       out.push('', `> ${h.text}${page}`);
@@ -61,6 +123,19 @@ export function libraryMarkdown(lib: Library, tree: Tree, rootId: string | null 
     }
   };
   walk(rootId, 2);
+  const inside = new Set(
+    lib.nodes.filter((n) => n.type === 'article' && (!rootId || tree.isInside(n.id, rootId))).map((n) => n.id),
+  );
+  const terms = glossary(lib).filter((t) => t.defs.some((d) => d.sources.some((s) => inside.has(s.articleId))));
+  if (terms.length) {
+    out.push('', '## Glossary', '');
+    for (const t of terms) {
+      for (const d of t.defs) {
+        const from = d.sources.map((s) => `${s.title}${s.year ? ` (${s.year})` : ''}`).join('; ');
+        out.push(`- **${t.term}**${d.text ? `: ${d.text}` : ''} _${from}_`);
+      }
+    }
+  }
   return out.join('\n') + '\n';
 }
 

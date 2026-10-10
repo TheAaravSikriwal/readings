@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fileUrl } from '../api';
 import { attachPdf, fetchInto } from '../importer';
-import { articleMarkdown, download, exportName, hasNote, sortNotes } from '../notes';
+import { articleMarkdown, download, exportName, glossary, hasNote, isDefinition, sortNotes } from '../notes';
+import type { MarkMode } from './SelectionPop';
 import { actions, EDITABLE, useStore } from '../store';
 import type { Highlight } from '../types';
 import { Edit } from '../ui/Edit';
@@ -40,7 +41,18 @@ const savedPaper = (): Paper => {
 const WEB_OVERLAP = 56;
 
 /** Reading view: the document like a book (page by page), your notes beside it. */
-export default function Reader({ id, onClose }: { id: string; onClose: () => void }) {
+/** A term reads as a term when it is a handful of words; a longer selection is
+ * taken to be the definition, and the term is asked for. */
+const looksLikeTerm = (s: string) => s.trim().split(/\s+/).length <= 6;
+
+interface ReaderProps {
+  id: string;
+  onClose: () => void;
+  /** A highlight to scroll to once the document is open (from the glossary). */
+  focusHighlight?: string | null;
+}
+
+export default function Reader({ id, onClose, focusHighlight }: ReaderProps) {
   const { tree, lib, pending } = useStore();
   const a = tree.article(id);
   const [active, setActive] = useState<string | null>(null);
@@ -58,7 +70,16 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
   const picker = useRef<HTMLInputElement>(null);
 
   const highlights = a?.highlights ?? [];
-  const sorted = useMemo(() => sortNotes(highlights), [highlights]);
+  const sorted = useMemo(() => sortNotes(highlights.filter((h) => !isDefinition(h))), [highlights]);
+  const terms = useMemo(() => (a ? glossary(lib, a.id) : []), [lib, a, highlights]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [openTerm, setOpenTerm] = useState<string | null>(null);
+
+  // Opened from the glossary: go to that definition.
+  useEffect(() => {
+    if (!focusHighlight) return;
+    setActive(focusHighlight);
+    setJump({ id: focusHighlight, n: Date.now() });
+  }, [focusHighlight]);
   const kind = a?.file?.endsWith('.pdf') ? 'pdf' : a?.file?.endsWith('.html') ? 'html' : null;
   const popped = pop ? highlights.find((h) => h.id === pop.id) : undefined;
 
@@ -198,10 +219,18 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
   }, [active]);
 
   const create = useCallback(
-    (h: Omit<Highlight, 'id' | 'created' | 'note'>, asNote: boolean, x: number, y: number) => {
-      const hid = actions.addHighlight(id, asNote ? { ...h, kind: 'note' } : h);
+    (h: Omit<Highlight, 'id' | 'created' | 'note'>, mode: MarkMode, x: number, y: number) => {
+      const short = looksLikeTerm(h.text);
+      const hid = actions.addHighlight(
+        id,
+        mode === 'note'
+          ? { ...h, kind: 'note' }
+          : mode === 'definition'
+            ? { ...h, kind: 'definition', term: short ? h.text : '', note: short ? '' : h.text }
+            : h,
+      );
       setActive(hid);
-      if (asNote) setPop({ id: hid, x, y });
+      if (mode !== 'highlight') setPop({ id: hid, x, y });
     },
     [id],
   );
@@ -212,8 +241,13 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
   }, []);
 
   const closePop = useCallback(() => {
-    // A note you opened and left empty goes away.
-    if (popped && popped.kind === 'note' && !popped.note.trim()) actions.removeHighlight(id, popped.id);
+    // A note you opened and left empty goes away. A definition with no term
+    // keeps the passage as a plain highlight rather than losing it.
+    if (popped?.kind === 'note' && !popped.note.trim()) actions.removeHighlight(id, popped.id);
+    if (popped?.kind === 'definition' && !popped.term?.trim()) {
+      actions.updateHighlight(id, popped.id, { kind: undefined, term: undefined });
+      if (popped.note.trim() === popped.text.trim()) actions.updateHighlight(id, popped.id, { note: '' });
+    }
     setPop(null);
   }, [popped, id]);
 
@@ -382,6 +416,56 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
             <Edit multiline value={a.summary} onChange={(summary) => actions.update(id, { summary })} placeholder="The point, in your words…" />
             {!EDITABLE && !a.summary && <p className="faint">—</p>}
           </section>
+          {(terms.length > 0 || (EDITABLE && kind)) && (
+            <section className="terms">
+              <h4>
+                Terms <span className="faint">{terms.length || ''}</span>
+              </h4>
+              {terms.length ? (
+                <div className="term-chips">
+                  {terms.map((t) => (
+                    <button
+                      key={t.key}
+                      className={`term-chip ${openTerm === t.key ? 'on' : ''}`}
+                      onClick={() => {
+                        const next = openTerm === t.key ? null : t.key;
+                        setOpenTerm(next);
+                        const hid = t.defs[0]?.sources[0]?.highlightId;
+                        if (next && hid) {
+                          setActive(hid);
+                          setJump({ id: hid, n: Date.now() });
+                        }
+                      }}
+                    >
+                      {t.term}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="faint">Select a word and press D to define it. Every term you define also goes in the glossary on the map.</p>
+              )}
+              {terms
+                .filter((t) => t.key === openTerm)
+                .map((t) => (
+                  <div key={t.key} className="term-open">
+                    {t.defs.map((d, i) => (
+                      <p key={i}>{d.text || <span className="faint">No definition written yet.</span>}</p>
+                    ))}
+                    {EDITABLE && (
+                      <button
+                        className="ghost tiny"
+                        onClick={(e) => {
+                          const hid = t.defs[0]?.sources[0]?.highlightId;
+                          if (hid) setPop({ id: hid, x: e.clientX - 320, y: e.clientY - 10 });
+                        }}
+                      >
+                        edit
+                      </button>
+                    )}
+                  </div>
+                ))}
+            </section>
+          )}
           <section>
             <div className="rail-head">
               <h4>
@@ -458,6 +542,7 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
           y={pop.y}
           editable={EDITABLE}
           onChange={(note) => actions.updateHighlight(id, popped.id, { note })}
+          onTerm={(term) => actions.updateHighlight(id, popped.id, { term })}
           onRemove={() => {
             actions.removeHighlight(id, popped.id);
             setPop(null);

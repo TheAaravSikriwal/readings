@@ -13,8 +13,12 @@ export interface Highlight {
   text: string;
   note: string;
   created: string;
-  /** 'note' = a line you annotated (drawn as an underline, not a highlight band) */
-  kind?: 'note';
+  /** 'note' = a line you annotated (drawn as an underline, not a highlight band).
+   * 'definition' = a term and what it means; `note` holds the definition.
+   * Definitions from every reading make up the glossary (src/notes.ts). */
+  kind?: 'note' | 'definition';
+  /** The word or phrase a definition defines. */
+  term?: string;
   /** PDF highlights */
   rects?: Rect[];
   /** Web snapshot highlights: character offsets into the snapshot text */

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
-import { SelectionPop } from './SelectionPop';
+import { SelectionPop, type MarkMode } from './SelectionPop';
 import { hasNote } from '../notes';
 import type { Highlight } from '../types';
 
@@ -11,7 +11,7 @@ interface Props {
   editable: boolean;
   jump: { id: string; n: number } | null;
   onPick: (id: string | null, x: number, y: number) => void;
-  onCreate: (h: { text: string; start: number; end: number }, asNote: boolean, x: number, y: number) => void;
+  onCreate: (h: { text: string; start: number; end: number }, mode: MarkMode, x: number, y: number) => void;
 }
 
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
@@ -105,7 +105,8 @@ export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCre
         start = full.indexOf(h.text);
         end = start + h.text.length;
       }
-      if (start >= 0) wrap(el, start, end, h.id, `hl${h.kind === 'note' ? ' note' : ''}${h.id === active ? ' on' : ''}`);
+      const kindClass = h.kind === 'note' ? ' note' : h.kind === 'definition' ? ' def' : '';
+      if (start >= 0) wrap(el, start, end, h.id, `hl${kindClass}${h.id === active ? ' on' : ''}`);
     }
     placeMarkers(el, highlights, active);
   }, [html, anchors, active]);
@@ -131,7 +132,7 @@ export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCre
   useEffect(() => {
     if (!jump) return;
     box.current?.querySelector(`mark[data-id="${jump.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [jump]);
+  }, [jump, html]);
 
   const onMouseUp = useCallback(
     (e: React.MouseEvent) => {
@@ -158,9 +159,9 @@ export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCre
   );
 
   const commit = useCallback(
-    (asNote: boolean) => {
+    (mode: MarkMode) => {
       if (!pending) return;
-      onCreate({ text: pending.text, start: pending.start, end: pending.end }, asNote, pending.x, pending.y);
+      onCreate({ text: pending.text, start: pending.start, end: pending.end }, mode, pending.x, pending.y);
       window.getSelection()?.removeAllRanges();
       setPending(null);
     },
@@ -175,8 +176,7 @@ export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCre
         <SelectionPop
           x={pending.x}
           y={pending.y}
-          onHighlight={() => commit(false)}
-          onNote={() => commit(true)}
+          onPick={commit}
           onDismiss={() => setPending(null)}
         />
       )}

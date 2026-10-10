@@ -6,6 +6,7 @@ import { AddMaterial, type AddSeed } from './ui/AddMaterial';
 import { Card, CARD_WIDTH } from './ui/Card';
 import { ContextMenu, type MenuAction } from './ui/ContextMenu';
 import { ExportSheet } from './ui/ExportSheet';
+import { Glossary } from './ui/Glossary';
 import { PublishSheet } from './ui/PublishSheet';
 import { Palette, type PaletteMode } from './ui/Palette';
 import { Prompt, type PromptSpec } from './ui/Prompt';
@@ -36,6 +37,15 @@ export default function App() {
   const [addDrop, setAddDrop] = useState<{ file: File; n: number } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [glossOpen, setGlossOpen] = useState(() => {
+    try {
+      return localStorage.getItem('glossary') !== 'closed';
+    } catch {
+      return true;
+    }
+  });
+  /* A definition to scroll to when the reader opens from the glossary. */
+  const [readHl, setReadHl] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 680px)').matches);
 
   useEffect(() => {
@@ -339,7 +349,27 @@ export default function App() {
         )}
       </div>
 
-      {!empty && (
+      {!reading && (
+        <Glossary
+          open={glossOpen}
+          onToggle={() => {
+            const next = !glossOpen;
+            setGlossOpen(next);
+            try {
+              localStorage.setItem('glossary', next ? 'open' : 'closed');
+            } catch {
+              // private mode
+            }
+          }}
+          onOpenSource={(s) => {
+            open(s.articleId);
+            setReadHl(s.highlightId);
+            setReading(s.articleId);
+          }}
+        />
+      )}
+
+      {!empty && !glossOpen && (
         <div className="hint">
           {EDITABLE
             ? 'click to open · double-click to read · drag onto a topic to move · shift-click to connect · right-click for more'
@@ -367,7 +397,14 @@ export default function App() {
 
       {reading && (
         <Suspense fallback={<div className="reader" />}>
-          <Reader id={reading} onClose={() => setReading(null)} />
+          <Reader
+            id={reading}
+            focusHighlight={readHl}
+            onClose={() => {
+              setReading(null);
+              setReadHl(null);
+            }}
+          />
         </Suspense>
       )}
 

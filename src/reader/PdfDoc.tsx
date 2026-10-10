@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { openPdf, pdfjs } from './pdfjs';
-import { SelectionPop } from './SelectionPop';
+import { SelectionPop, type MarkMode } from './SelectionPop';
 import { hasNote } from '../notes';
 import type { Highlight, Rect } from '../types';
 
@@ -16,7 +16,7 @@ interface Props {
   editable: boolean;
   jump: { id: string; n: number } | null;
   onPick: (id: string | null, x: number, y: number) => void;
-  onCreate: (h: { text: string; rects: Rect[] }, asNote: boolean, x: number, y: number) => void;
+  onCreate: (h: { text: string; rects: Rect[] }, mode: MarkMode, x: number, y: number) => void;
 }
 
 interface Pending {
@@ -118,7 +118,7 @@ export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onP
       const top = page.offsetTop + r.y * page.offsetHeight - scroller.clientHeight * 0.3;
       scroller.scrollTo({ top, behavior: 'smooth' });
     }
-  }, [jump]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jump, sizes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const aspect = sizes[0] ? sizes[0].w / sizes[0].h : 0.77;
   const fitted = fit === 'page' ? Math.min(width, height * aspect * 1.4) : Math.min(width - 48, 860);
@@ -179,9 +179,9 @@ export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onP
   );
 
   const commit = useCallback(
-    (asNote: boolean) => {
+    (mode: MarkMode) => {
       if (!pending) return;
-      onCreate({ text: pending.text, rects: pending.rects }, asNote, pending.x, pending.y);
+      onCreate({ text: pending.text, rects: pending.rects }, mode, pending.x, pending.y);
       window.getSelection()?.removeAllRanges();
       setPending(null);
     },
@@ -215,8 +215,7 @@ export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onP
           <SelectionPop
             x={pending.x}
             y={pending.y}
-            onHighlight={() => commit(false)}
-            onNote={() => commit(true)}
+            onPick={commit}
             onDismiss={() => setPending(null)}
           />,
           box.current?.closest('.reader') ?? document.body,
@@ -297,7 +296,7 @@ function PdfPage({ doc, index, width, base, marks, active, onPick }: PageProps) 
         {marks.map(({ h, r }, k) => (
           <div
             key={`${h.id}-${k}`}
-            className={`hl ${h.kind === 'note' ? 'note' : ''} ${active === h.id ? 'on' : ''}`}
+            className={`hl ${h.kind === 'note' ? 'note' : h.kind === 'definition' ? 'def' : ''} ${active === h.id ? 'on' : ''}`}
             style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
           />
         ))}
