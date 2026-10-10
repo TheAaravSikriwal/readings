@@ -10,6 +10,7 @@ import {
   glossary,
   hasNote,
   isDefinition,
+  isQuestion,
   isReference,
   referenceList,
   scholarUrl,
@@ -952,7 +953,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
                   <div
                     key={h.id}
                     data-h={h.id}
-                    className={`hcard ${active === h.id ? 'on' : ''} ${open ? 'open' : 'shut'} ${h.text ? '' : 'general'}`}
+                    className={`hcard ${active === h.id ? 'on' : ''} ${open ? 'open' : 'shut'} ${h.text ? '' : 'general'} ${isQuestion(h) ? 'question' : ''}`}
                     onClick={(e) => {
                       // Clicking the passage of the open card closes it again.
                       if (active === h.id && !allOpen && (e.target as HTMLElement).closest('blockquote')) return setActive(null);
@@ -962,9 +963,10 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
                   >
                     {h.text && <blockquote className={h.kind === 'note' ? 'note' : ''}>{h.text}</blockquote>}
                     <div className="hmeta">
+                      {isQuestion(h) && <span className="q-label">question</span>}
                       <span className="faint">
                         {h.rects?.length ? `p. ${h.rects[0].p + 1}` : ''}
-                        {open && h.text && hasNote(h) ? (h.rects?.length ? ' · note' : 'note') : ''}
+                        {open && h.text && hasNote(h) && !isQuestion(h) ? (h.rects?.length ? ' · note' : 'note') : ''}
                       </span>
                       {/* Closed: the note's first line, beside its page. */}
                       {!open && h.note.trim() && <span className="hnote hnote-preview">{h.note}</span>}

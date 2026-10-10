@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { openPdf, pdfjs } from './pdfjs';
 import { SelectionPop, type MarkMode } from './SelectionPop';
-import { hasNote } from '../notes';
+import { hasNote, isQuestion } from '../notes';
 import type { Highlight, Rect, Section } from '../types';
 
 interface Props {
@@ -311,15 +311,21 @@ function PdfPage({ doc, index, width, base, marks, active, onPick }: PageProps) 
   return (
     <div className="pdf-page" data-page={index} ref={el} style={{ width, height: base.h * scale }}>
       <canvas ref={canvas} />
-      <div className="hl-layer">
-        {marks.map(({ h, r }, k) => (
-          <div
-            key={`${h.id}-${k}`}
-            className={`hl ${h.kind === 'note' ? 'note' : h.kind === 'definition' ? 'def' : h.kind === 'reference' ? 'cite' : ''} ${active === h.id ? 'on' : ''}`}
-            style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
-          />
-        ))}
-      </div>
+      {/* Questions get a layer of their own: red, where the rest invert the ink. */}
+      {[false, true].map((q) => (
+        <div key={String(q)} className={`hl-layer ${q ? 'hl-q' : ''}`}>
+          {marks
+            .map((m, k) => ({ ...m, k }))
+            .filter(({ h }) => isQuestion(h) === q)
+            .map(({ h, r, k }) => (
+              <div
+                key={`${h.id}-${k}`}
+                className={`hl ${h.kind === 'note' ? 'note' : h.kind === 'definition' ? 'def' : h.kind === 'reference' ? 'cite' : ''} ${active === h.id ? 'on' : ''}`}
+                style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
+              />
+            ))}
+        </div>
+      ))}
       <div
         className="textLayer"
         ref={text}
@@ -330,7 +336,7 @@ function PdfPage({ doc, index, width, base, marks, active, onPick }: PageProps) 
         {firstOnPage(marks).map(({ h, r }) => (
           <button
             key={h.id}
-            className={`mnote ${active === h.id ? 'on' : ''}`}
+            className={`mnote ${active === h.id ? 'on' : ''} ${isQuestion(h) ? 'q' : ''}`}
             style={{ top: `${(r.y + r.h / 2) * 100}%` }}
             title={h.note}
             onMouseUp={(e) => e.stopPropagation()}

@@ -3323,3 +3323,65 @@ b.np-cite {
   width: 16px;
   height: 16px;
 }
+
+/* ------------------------------------------------------------ questions */
+
+/* A note ending in "?" asks something: red, in the page and in the panel. */
+.hl-layer.hl-q {
+  mix-blend-mode: multiply;
+}
+.hl-layer.hl-q .hl {
+  background: rgba(229, 50, 45, 0.42);
+  border-radius: 2px;
+}
+.hl-layer.hl-q .hl.note {
+  background: rgba(229, 50, 45, 0.12);
+  border-bottom: 2px solid var(--ribbon);
+  border-radius: 0;
+}
+.hl-layer.hl-q .hl.on {
+  background: rgba(229, 50, 45, 0.6);
+  box-shadow: 0 0 0 2px var(--ribbon);
+}
+mark.hl.q {
+  background: var(--ribbon);
+  color: #fff;
+}
+mark.hl.q.on {
+  outline-color: var(--ribbon);
+}
+mark.hl.note.q {
+  background: color-mix(in srgb, var(--ribbon) 14%, transparent);
+  color: inherit;
+  border-bottom-color: var(--ribbon);
+}
+.pdf-page .mnote.q,
+.snapshot .mnote.q {
+  background: var(--ribbon);
+}
+.q-label {
+  flex: none;
+  padding: 1px 7px 2px;
+  border: 1px solid color-mix(in srgb, var(--ribbon) 60%, transparent);
+  border-radius: 999px;
+  color: var(--ribbon);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.hcard.question blockquote {
+  border-left-color: var(--ribbon);
+}
+.hcard.question.on {
+  border-color: color-mix(in srgb, var(--ribbon) 55%, transparent);
+}
+.hcard.question .hmeta {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.hcard.question.open .hmeta .ghost {
+  margin-left: auto;
+}
+.np-actions .q-label {
+  margin-right: auto;
+}

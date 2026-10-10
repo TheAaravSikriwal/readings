@@ -30,6 +30,11 @@ export function sectionIndex(h: Highlight, sections: Section[]): number | null {
 export const isDefinition = (h: Highlight) => h.kind === 'definition';
 export const isReference = (h: Highlight) => h.kind === 'reference';
 
+/** A note that asks something: it ends in a question mark. Shown in red, labelled "question".
+ * (Definitions and references keep their own look.) */
+export const isQuestion = (h: Highlight) =>
+  !isDefinition(h) && !isReference(h) && /\?["'”’)\]]*$/.test(h.note.trim());
+
 /** A line with a note on it (definitions and references are listed apart). */
 export const hasNote = (h: Highlight) =>
   !isDefinition(h) && !isReference(h) && (h.kind === 'note' || !!h.note.trim());
@@ -219,11 +224,12 @@ export function articleMarkdown(a: Article, tree: Tree, lib: Library, level = 2)
     if (k !== null && k >= 0 && k !== section) out.push('', `_${sections[k].title}_`);
     if (k !== null) section = k;
     const page = h.rects?.length ? ` (p. ${h.rects[0].p + 1})` : '';
+    const q = isQuestion(h) ? '**Question:** ' : '';
     if (h.text) {
       out.push('', `> ${h.text}${page}`);
-      if (h.note.trim()) out.push('', h.note.trim());
+      if (h.note.trim()) out.push('', q + h.note.trim());
     } else if (h.note.trim()) {
-      out.push('', `- ${h.note.trim().replace(/\n/g, '\n  ')}`);
+      out.push('', `- ${q}${h.note.trim().replace(/\n/g, '\n  ')}`);
     }
   }
   const links = lib.links

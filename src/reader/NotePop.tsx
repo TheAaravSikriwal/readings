@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { isQuestion } from '../notes';
 import type { Highlight } from '../types';
 import { Edit } from '../ui/Edit';
 
@@ -126,6 +127,7 @@ export function NotePop({ h, x, y, editable, onChange, onTerm, onCite, onRemove,
         <p className="np-note">{h.note || <span className="faint">{isRef ? '' : 'No note, just highlighted.'}</span>}</p>
       )}
       <div className="np-actions">
+        {isQuestion(h) && <span className="q-label">question</span>}
         {editable && (
           <span className="np-hint faint">
             {isDef && !h.term

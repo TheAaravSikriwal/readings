@@ -40,6 +40,7 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 | select text → **define** (`D`) | save a term and its definition. Select just the term and write what it means, or select a defining passage and name the term. It gets a dotted underline |
 | select text → **reference** (`R`) | log a work the paper cites, to read next. Select the entry in its reference list, or an in-text citation like "[12]" and type what it cites. Then say why it's worth following, or just press Enter. It gets a dashed underline |
 | **bookmark** (`B`) | leave a red bookmark on the line you're reading, and label it if you like. As many as you want per reading |
+| end a note with `?` | it becomes a **question**: its highlight and margin dot turn red and its card says "question" |
 | click a highlight or margin dot | read or edit its note |
 | **+ note** in the side panel | a note about the whole reading |
 | `←` `→`, PgUp/PgDn, or the ‹ › pager | previous / next page |

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { SelectionPop, type MarkMode } from './SelectionPop';
-import { hasNote } from '../notes';
+import { hasNote, isQuestion } from '../notes';
 import type { Highlight, Section } from '../types';
 import { htmlOutline } from './outline';
 
@@ -60,7 +60,7 @@ function placeMarkers(el: HTMLElement, highlights: Highlight[], active: string |
     if (!m) continue;
     const r = m.getBoundingClientRect();
     const dot = document.createElement('span');
-    dot.className = `mnote${h.id === active ? ' on' : ''}`;
+    dot.className = `mnote${h.id === active ? ' on' : ''}${isQuestion(h) ? ' q' : ''}`;
     dot.dataset.id = h.id;
     dot.title = h.note;
     dot.style.top = `${r.top - top + r.height / 2}px`;
@@ -87,7 +87,9 @@ export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCre
   }, [url]);
 
   // Only re-wrap when anchors change, not on every keystroke of a note.
-  const anchors = highlights.map((h) => `${h.id}:${h.start}:${h.end}:${h.kind ?? ''}:${hasNote(h) ? 1 : 0}`).join();
+  const anchors = highlights
+    .map((h) => `${h.id}:${h.start}:${h.end}:${h.kind ?? ''}:${hasNote(h) ? 1 : 0}:${isQuestion(h) ? 1 : 0}`)
+    .join();
   const latest = useRef(highlights);
   latest.current = highlights;
 
@@ -108,7 +110,9 @@ export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCre
         start = full.indexOf(h.text);
         end = start + h.text.length;
       }
-      const kindClass = h.kind === 'note' ? ' note' : h.kind === 'definition' ? ' def' : h.kind === 'reference' ? ' cite' : '';
+      const kindClass =
+        (h.kind === 'note' ? ' note' : h.kind === 'definition' ? ' def' : h.kind === 'reference' ? ' cite' : '') +
+        (isQuestion(h) ? ' q' : '');
       if (start >= 0) wrap(el, start, end, h.id, `hl${kindClass}${h.id === active ? ' on' : ''}`);
     }
     placeMarkers(el, highlights, active);
