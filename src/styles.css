@@ -3588,3 +3588,219 @@ mark.hl.note.q {
   font: 600 11px var(--sans);
   opacity: 0.75;
 }
+
+/* ---------------------------------------------------------------- notes */
+
+.notes-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  animation: rise 0.35s var(--ease);
+}
+.notes-status {
+  font-size: 11px;
+  margin-right: 6px;
+}
+.notes-status.error {
+  color: var(--fg);
+}
+.notes-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: clamp(240px, 24vw, 320px) 1fr;
+}
+.notes-list {
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  padding: 12px 10px 40px;
+}
+.notes-list .gloss-search {
+  width: calc(100% - 12px);
+  margin: 0 6px 8px;
+}
+.note-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--dim);
+  text-align: left;
+  cursor: pointer;
+}
+.note-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.note-row.on {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--fg);
+}
+.note-row-title {
+  font: 15px/1.3 var(--serif);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-row-meta {
+  font-size: 11.5px;
+  color: var(--faint);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.note-row-meta .mono {
+  font-size: 10.5px;
+  margin-right: 4px;
+}
+.note-undo {
+  margin: 10px 6px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.note-pane {
+  overflow: auto;
+  padding: 18px clamp(20px, 6vw, 80px) 120px;
+}
+.note-tools {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 16px;
+  max-width: 760px;
+  margin: 0 auto 10px;
+}
+.note-tools .mono {
+  margin-right: auto;
+}
+.note-editor {
+  display: block;
+  width: 100%;
+  max-width: 760px;
+  min-height: calc(100vh - 200px);
+  margin: 0 auto;
+  background: none;
+  border: 0;
+  outline: 0;
+  resize: none;
+  color: var(--fg);
+  font: 17px/1.65 var(--serif);
+}
+.note-editor::placeholder {
+  color: var(--faint);
+}
+.note-read {
+  max-width: 760px;
+  margin: 0 auto;
+  font: 17px/1.65 var(--serif);
+  color: rgba(255, 255, 255, 0.88);
+  cursor: text;
+}
+.note-read h1,
+.note-read h2,
+.note-read h3,
+.note-read h4 {
+  font-family: var(--serif);
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--fg);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.note-read h1 {
+  font-size: 30px;
+  margin: 6px 0 18px;
+}
+.note-read h2 {
+  font-size: 22px;
+  margin: 34px 0 10px;
+}
+.note-read h3 {
+  font-size: 18px;
+  margin: 24px 0 8px;
+}
+.note-read h4 {
+  font-size: 16px;
+  margin: 18px 0 6px;
+}
+.note-read p,
+.note-read ul,
+.note-read ol {
+  margin: 0 0 14px;
+}
+.note-read li {
+  margin: 4px 0;
+}
+.note-read blockquote {
+  margin: 14px 0;
+  padding-left: 14px;
+  border-left: 2px solid #fff;
+  color: var(--dim);
+}
+.note-read code {
+  font: 0.86em var(--mono);
+  background: rgba(255, 255, 255, 0.07);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.note-read pre {
+  margin: 14px 0;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: auto;
+}
+.note-read pre code {
+  background: none;
+  padding: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.note-read a {
+  color: var(--fg);
+  text-underline-offset: 3px;
+  text-decoration-color: var(--faint);
+}
+.note-read hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 28px 0;
+}
+.note-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-top: 22vh;
+  color: var(--dim);
+}
+@media (max-width: 680px) {
+  .notes-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .notes-list {
+    max-height: 30vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+.note-read li > ul,
+.note-read li > ol {
+  margin: 4px 0 8px;
+}
+.note-read li > p {
+  margin: 0 0 8px;
+}
+.note-read ul ul {
+  list-style: circle;
+}

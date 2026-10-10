@@ -210,6 +210,41 @@ export function library(opts: LibraryOptions = {}): Plugin {
             }
             return;
           }
+          // ---- notes: one Markdown file each in data/notes. Yours alone: never in the website build.
+          const noteRoute = p.match(/^\/api\/notes(?:\/([a-z0-9_-]{1,40}))?$/i);
+          if (noteRoute) {
+            const dir = path.join(dataDir, 'notes');
+            const id = noteRoute[1];
+            await fsp.mkdir(dir, { recursive: true });
+            if (!id && req.method === 'GET') {
+              const names = (await fsp.readdir(dir)).filter((f) => /^[a-z0-9_-]{1,40}\.md$/i.test(f));
+              const notes = await Promise.all(
+                names.map(async (f) => {
+                  const full = path.join(dir, f);
+                  const [body, st] = await Promise.all([fsp.readFile(full, 'utf8'), fsp.stat(full)]);
+                  return { id: f.slice(0, -3), body, updated: st.mtime.toISOString() };
+                }),
+              );
+              notes.sort((a, b) => b.updated.localeCompare(a.updated));
+              return send(res, 200, notes);
+            }
+            if (id && req.method === 'PUT') {
+              const body = (await readBody(req, 5 * 1024 * 1024)).toString('utf8');
+              const file = path.join(dir, `${id}.md`);
+              await fsp.writeFile(file + '.tmp', body, 'utf8');
+              await fsp.rename(file + '.tmp', file);
+              return send(res, 200, { updated: new Date().toISOString() });
+            }
+            if (id && req.method === 'DELETE') {
+              // Into the trash, not gone.
+              const file = path.join(dir, `${id}.md`);
+              const trash = path.join(dataDir, 'trash');
+              await fsp.mkdir(trash, { recursive: true });
+              if (fs.existsSync(file)) await fsp.rename(file, path.join(trash, `${Date.now()}-note-${id}.md`));
+              return send(res, 200, { ok: true });
+            }
+            return send(res, 405, { error: 'Not allowed' });
+          }
           if (p === '/api/trash' && req.method === 'POST') {
             const { file } = JSON.parse((await readBody(req, 1e5)).toString('utf8'));
             if (!FILE_RE.test(file)) return send(res, 400, { error: 'Bad file name' });

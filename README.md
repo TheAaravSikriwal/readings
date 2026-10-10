@@ -107,6 +107,11 @@ bubbles, and the idle drift. Every change is one Ctrl+Z away.
 A reading's card can **replace** its PDF with another (the wrong one went in) without making the
 bubble again: everything else stays, and Ctrl+Z brings the old file back.
 
+**notes** in the bottom bar opens your own notes, about anything: a list on the left, the note on
+the right. The first line is its title; it saves as you type, and shows `#` headings, **bold**,
+*italics*, lists (nested too), quotes, code and links once you're done editing. Each note is a
+Markdown file in `data/notes/`, so any editor can open it, and none of them go on the website.
+
 **export** in the bottom bar downloads all your notes and summaries (or one topic) as
 Markdown, or a full JSON backup.
 

@@ -10,6 +10,7 @@ import { AddMaterial, type AddSeed } from './ui/AddMaterial';
 import { Card, CARD_WIDTH } from './ui/Card';
 import { ContextMenu, type MenuAction } from './ui/ContextMenu';
 import { ExportSheet } from './ui/ExportSheet';
+import { Notes } from './ui/Notes';
 import { PublishSheet } from './ui/PublishSheet';
 import { Palette, type PaletteMode } from './ui/Palette';
 import { Prompt, type PromptSpec } from './ui/Prompt';
@@ -50,6 +51,7 @@ export default function App() {
   const [addDrop, setAddDrop] = useState<{ file: File; n: number } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [shelf, setShelf] = useState(() => ({ glossary: shelfOpen('glossary'), references: shelfOpen('references') }));
   const terms = useMemo(() => glossary(lib), [lib, rev]); // eslint-disable-line react-hooks/exhaustive-deps
   const refs = useMemo(() => referenceList(lib), [lib, rev]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -209,7 +211,7 @@ export default function App() {
   // Keyboard: / search · Esc back out · Enter read · n new topic
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (editing || reading || palette || prompt || adding || exporting || publishing || typing(e.target)) return;
+      if (editing || notesOpen || reading || palette || prompt || adding || exporting || publishing || typing(e.target)) return;
       if (e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) {
         e.preventDefault();
         setPalette({ kind: 'search' });
@@ -343,7 +345,7 @@ export default function App() {
         focus={focus}
         selected={selected}
         marked={palette?.kind === 'connect' ? palette.from : null}
-        paused={!!reading}
+        paused={!!reading || notesOpen}
         shiftX={narrow ? 0 : (CARD_WIDTH + 24) / 2}
         shiftY={narrow ? Math.round(window.innerHeight * 0.3) : 0}
         editing={editing}
@@ -425,6 +427,9 @@ export default function App() {
         </button>
         {EDITABLE && (
           <>
+            <button onClick={() => setNotesOpen(true)} title="Your own notes, about anything">
+              notes
+            </button>
             <button onClick={() => setExporting(true)}>export</button>
             <span className="tsep" />
             <button className="strong" onClick={() => setPublishing(true)}>
@@ -509,6 +514,7 @@ export default function App() {
         />
       )}
       {exporting && <ExportSheet focus={focus} onClose={() => setExporting(false)} />}
+      {notesOpen && EDITABLE && <Notes onClose={() => setNotesOpen(false)} />}
       {publishing && <PublishSheet onClose={() => setPublishing(false)} />}
 
       {reading && (

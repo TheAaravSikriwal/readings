@@ -23,6 +23,13 @@ const post = (url: string, body: unknown) =>
 
 export const fileUrl = (file: string) => `data/files/${file}`;
 
+/** A note: a Markdown file in data/notes. Its first line is its title. */
+export interface NoteFile {
+  id: string;
+  body: string;
+  updated: string;
+}
+
 export const api = {
   load: async (): Promise<Library> => json(await fetch('data/library.json', { cache: 'no-store' })),
   save: async (lib: Library) =>
@@ -32,4 +39,8 @@ export const api = {
   fetchUrl: async (url: string, id: string): Promise<FetchResult> => json(await post('api/fetch', { url, id })),
   meta: async (q: { arxiv?: string; doi?: string }): Promise<Meta> => json(await post('api/meta', q)),
   trash: async (file: string) => json(await post('api/trash', { file })),
+  notes: async (): Promise<NoteFile[]> => json(await fetch('api/notes', { cache: 'no-store' })),
+  saveNote: async (id: string, body: string): Promise<{ updated: string }> =>
+    json(await fetch(`api/notes/${id}`, { method: 'PUT', body })),
+  deleteNote: async (id: string) => json(await fetch(`api/notes/${id}`, { method: 'DELETE' })),
 };
