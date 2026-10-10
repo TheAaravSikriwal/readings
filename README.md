@@ -43,6 +43,8 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 | click a highlight or margin dot | read or edit its note |
 | **+ note** in the side panel | a note about the whole reading |
 | `←` `→`, PgUp/PgDn, or the ‹ › pager | previous / next page |
+| **contents** (`O`) | the document's headings and subheadings beside the page: where you are, and a click to go anywhere |
+| `[` `]` | previous / next heading |
 | **focus** (`F`) | full screen, just the page, no edges. Click left/right of it to turn the page |
 | **paper** (`W`) | page colour: white, warm or dark |
 | **export** | this article's summary and notes as Markdown |
@@ -61,7 +63,12 @@ It goes in the citing reading's topic, connected to it. **find ↗** searches Go
 Glossary and references each hide with ×, and come back from their tab.
 
 Inside a reading, its own bookmarks, terms and references sit at the top of the side panel;
-each section folds away. The article's card on the map lists its references too.
+each section folds away. Headings are found when a reading is first opened: a PDF's own
+bookmarks if it has them, otherwise read off the text (bigger type, numbered titles like
+"6. Contrary Views…" or "(1) The Theological Objection", short lines standing on their own); a
+saved web page's heading tags. Notes and references then sit in folders, one per heading, each
+of which folds away; click a folder's name to go to that heading. Exports group quotes the
+same way. The article's card on the map lists its references too.
 
 Readings with bookmarks are **pinned** at the top of the map: click one to go straight back to
 the last place you marked, or the number beside it for all of them. Bookmarked pearls carry a

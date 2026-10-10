@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fileUrl } from '../api';
 import { attachPdf, fetchInto } from '../importer';
 import {
@@ -13,11 +13,13 @@ import {
   isReference,
   referenceList,
   scholarUrl,
+  sectionIndex,
   sortNotes,
 } from '../notes';
+import { OUTLINE_V } from './outline';
 import type { MarkMode } from './SelectionPop';
 import { actions, EDITABLE, useStore } from '../store';
-import type { Bookmark, Highlight } from '../types';
+import type { Bookmark, Highlight, Section } from '../types';
 import { BookmarkPop, bookmarkPlace } from './BookmarkPop';
 import { Edit } from '../ui/Edit';
 import { HtmlDoc } from './HtmlDoc';
@@ -128,6 +130,54 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
     setJump({ id: focusHighlight, n: Date.now() });
   }, [focusHighlight]);
   const kind = a?.file?.endsWith('.pdf') ? 'pdf' : a?.file?.endsWith('.html') ? 'html' : null;
+
+  // ---- headings: a contents list to move around by, and folders for the notes
+
+  const stored = a?.outline?.v === OUTLINE_V ? a.outline.sections : null;
+  const [found, setFound] = useState<Section[] | null>(null);
+  const sections = useMemo(() => stored ?? found ?? [], [stored, found]);
+  const outlineKnown = !!stored || found !== null;
+  const storedRef = useRef(stored);
+  storedRef.current = stored;
+  const onOutline = useCallback(
+    (s: Section[]) => {
+      setFound(s);
+      if (EDITABLE && JSON.stringify(storedRef.current) !== JSON.stringify(s)) actions.setOutline(id, { v: OUTLINE_V, sections: s });
+    },
+    [id],
+  );
+  const [tocOpen, setTocOpen] = useState(() => pref.get('toc') === '1');
+  const toggleToc = useCallback(
+    () =>
+      setTocOpen((o) => {
+        pref.set('toc', o ? '0' : '1');
+        return !o;
+      }),
+    [],
+  );
+  const [cur, setCur] = useState(-1);
+  /** Folded section folders in the side panel: `n3` (notes) or `r3` (references). */
+  const [shutSecs, setShutSecs] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(pref.get(`secs:${id}`) ?? '[]'));
+    } catch {
+      return new Set();
+    }
+  });
+  const toggleSec = (key: string) =>
+    setShutSecs((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      pref.set(`secs:${id}`, JSON.stringify([...next]));
+      return next;
+    });
+  const secOf = useMemo(() => new Map(highlights.map((h) => [h.id, sectionIndex(h, sections)])), [highlights, sections]);
+  const secCounts = useMemo(() => {
+    const c = sections.map(() => 0);
+    for (const k of secOf.values()) if (k !== null && k >= 0) c[k]++;
+    return c;
+  }, [secOf, sections]);
   const popped = pop ? highlights.find((h) => h.id === pop.id) : undefined;
 
   // ---- pages: real PDF pages, or screen-sized pages of a web article
@@ -282,6 +332,68 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
     });
   }, [kind, bookmarks, id]);
 
+  /** Each heading's position in the scrolling document, in px (null: not laid out). */
+  const sectionTops = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return sections.map(() => null);
+    const pages = new Map<number, HTMLElement>();
+    el.querySelectorAll<HTMLElement>('.pdf-page').forEach((pg) => pages.set(Number(pg.dataset.page), pg));
+    const snap = el.querySelector<HTMLElement>('.snapshot');
+    const heads = snap ? [...snap.querySelectorAll<HTMLElement>('h1, h2, h3, h4')] : [];
+    return sections.map((s) => {
+      if (s.p !== undefined) {
+        const pg = pages.get(s.p);
+        return pg && pg.offsetHeight ? pg.offsetTop + (s.y ?? 0) * pg.offsetHeight : null;
+      }
+      const h = s.i !== undefined ? heads[s.i] : undefined;
+      return snap && h ? snap.offsetTop + h.offsetTop : null;
+    });
+  }, [sections]);
+
+  const goToSection = useCallback(
+    (i: number) => {
+      const el = scroller.current;
+      const top = sectionTops()[i];
+      if (el && top !== null && top !== undefined) el.scrollTo({ top: Math.max(0, top - el.clientHeight * 0.08), behavior: 'smooth' });
+    },
+    [sectionTops],
+  );
+
+  // Which section you're reading.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || !sections.length) return setCur(-1);
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const line = el.scrollTop + el.clientHeight * 0.2;
+      let k = -1;
+      sectionTops().forEach((t, i) => t !== null && t <= line && (k = i));
+      setCur(k);
+    };
+    const later = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    el.addEventListener('scroll', later, { passive: true });
+    update();
+    return () => {
+      el.removeEventListener('scroll', later);
+      cancelAnimationFrame(raf);
+    };
+  }, [sections, sectionTops, layoutTick]);
+
+  /** [ and ]: the previous or next heading. */
+  const stepSection = (dir: 1 | -1) => {
+    if (!sections.length) return;
+    const el = scroller.current;
+    const tops = sectionTops();
+    const here = cur >= 0 ? tops[cur] : null;
+    // Partway into a section, [ goes back to its start first.
+    const inside = el && here !== null && el.scrollTop - (here - el.clientHeight * 0.08) > 40;
+    const target = dir > 0 ? cur + 1 : inside ? cur : cur - 1;
+    if (target >= 0 && target < sections.length) goToSection(target);
+  };
+
   // Opened from a pin on the map: go to that bookmark once the pages are laid out.
   useEffect(() => {
     if (!focusBookmark) return;
@@ -314,6 +426,9 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') (e.preventDefault(), goTo(current() - 1));
       if (e.key === 'f' || e.key === 'F') toggleFocus();
       if (e.key === 'w' || e.key === 'W') cyclePaper();
+      if (e.key === 'o' || e.key === 'O') toggleToc();
+      if (e.key === ']') (e.preventDefault(), stepSection(1));
+      if (e.key === '[') (e.preventDefault(), stepSection(-1));
       if ((e.key === 'b' || e.key === 'B') && !e.ctrlKey && !e.metaKey) {
         e.preventDefault(); // or the b lands in the label box that opens
         placeBookmark();
@@ -323,7 +438,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [onClose, kind, goTo, page.n, focus, toggleFocus, placeBookmark]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [onClose, kind, goTo, page.n, focus, toggleFocus, placeBookmark, sections, cur]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // In focus mode the page counter and the pointer get out of the way when
   // nothing is moving.
@@ -405,6 +520,58 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
   }
 
   if (!a) return null;
+
+  /** Items sorted into folders by the heading they sit under (nothing to sort without headings). */
+  const foldered = <T,>(items: T[], key: string, sec: (t: T) => number | null | undefined, render: (t: T) => ReactNode) => {
+    if (!sections.length) return items.map(render);
+    const n = sections.length;
+    const by = new Map<number, T[]>();
+    const loose: T[] = [];
+    for (const t of items) {
+      const k = sec(t);
+      if (k === null || k === undefined || k < 0) loose.push(t);
+      else by.set(k, [...(by.get(k) ?? []), t]);
+    }
+    const endOf = (i: number) => {
+      let j = i + 1;
+      while (j < n && sections[j].level > sections[i].level) j++;
+      return j;
+    };
+    const total = sections.map((_, i) => {
+      let c = 0;
+      for (let j = i; j < endOf(i); j++) c += by.get(j)?.length ?? 0;
+      return c;
+    });
+    const out: ReactNode[] = loose.map(render);
+    let hideUntil = -1;
+    for (let i = 0; i < n; i++) {
+      if (i < hideUntil || !total[i]) continue;
+      const k = `${key}${i}`;
+      const shut = shutSecs.has(k);
+      const lvl = sections[i].level;
+      out.push(
+        <div key={`sec-${k}`} className={`sec-row lvl-${lvl} ${cur === i ? 'here' : ''}`}>
+          <button className={`ly-caret ${shut ? 'closed' : ''}`} onClick={() => toggleSec(k)} aria-label={shut ? 'Open' : 'Close'} />
+          <button className="sec-title" onClick={() => goToSection(i)} title="Go to this heading">
+            {sections[i].title}
+          </button>
+          <span className="sec-count">{total[i]}</span>
+        </div>,
+      );
+      if (shut) {
+        hideUntil = endOf(i);
+        continue;
+      }
+      const mine = by.get(i);
+      if (mine?.length)
+        out.push(
+          <div key={`items-${k}`} className={`sec-items lvl-${lvl}`}>
+            {mine.map(render)}
+          </div>,
+        );
+    }
+    return out;
+  };
   const busy = pending.has(id);
   const notesOnly = !kind && !EDITABLE;
 
@@ -457,6 +624,18 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
               </button>
             </>
           )}
+          {kind && (
+            <>
+              <span className="tool-sep" />
+              <button
+                className={`ghost ${tocOpen ? 'on' : ''}`}
+                onClick={toggleToc}
+                title="The headings in this document (O). [ and ] jump between them."
+              >
+                contents
+              </button>
+            </>
+          )}
           {kind && EDITABLE && (
             <>
               <span className="tool-sep" />
@@ -497,7 +676,10 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
         </div>
       </header>
 
-      <div className={`r-body ${notesOnly ? 'notes-only' : ''}`}>
+      <div className={`r-body ${notesOnly ? 'notes-only' : ''} ${tocOpen && kind && !focus ? 'with-toc' : ''}`}>
+        {tocOpen && kind && !focus && (
+          <Contents sections={sections} known={outlineKnown} cur={cur} counts={secCounts} onGo={goToSection} onClose={toggleToc} />
+        )}
         {!notesOnly && (
           <main className="r-doc" ref={scroller} onClick={turn}>
             {marksInOrder.length > 0 && (
@@ -534,6 +716,8 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
                 jump={jump}
                 onPick={pick}
                 onCreate={create}
+                findOutline={!stored}
+                onOutline={onOutline}
               />
             )}
             {kind === 'html' && (
@@ -545,6 +729,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
                 jump={jump}
                 onPick={pick}
                 onCreate={create}
+                onOutline={onOutline}
               />
             )}
             {!kind && (
@@ -683,7 +868,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
               </button>
               {!fold.refs &&
                 (refs.length ? (
-                  refs.map((r) => {
+                  foldered(refs, 'r', (r) => secOf.get(r.sources[0].highlightId), (r) => {
                     const src = r.sources[0];
                     const link = citeLink(r.cite);
                     const note = r.sources.map((x) => x.note).filter(Boolean).join(' ');
@@ -755,7 +940,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
               )}
             </div>
             {!fold.notes &&
-              sorted.map((h) => {
+              foldered(sorted, 'n', (h) => secOf.get(h.id), (h) => {
                 const open = allOpen || active === h.id || fresh === h.id || (!h.text && !h.note.trim());
                 return (
                   <div
@@ -854,5 +1039,50 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
         />
       )}
     </div>
+  );
+}
+
+/** Every heading in the document: where you are, and one click to go anywhere. */
+function Contents({
+  sections,
+  known,
+  cur,
+  counts,
+  onGo,
+  onClose,
+}: {
+  sections: Section[];
+  known: boolean;
+  cur: number;
+  counts: number[];
+  onGo: (i: number) => void;
+  onClose: () => void;
+}) {
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    list.current?.querySelector('.toc-row.on')?.scrollIntoView({ block: 'nearest' });
+  }, [cur]);
+  return (
+    <nav className="toc" aria-label="Contents">
+      <div className="toc-head">
+        <h4>Contents</h4>
+        <button className="icon" onClick={onClose} aria-label="Hide contents">
+          ×
+        </button>
+      </div>
+      {sections.length ? (
+        <div className="toc-list" ref={list}>
+          {sections.map((s, i) => (
+            <button key={i} className={`toc-row lvl-${s.level} ${cur === i ? 'on' : ''}`} onClick={() => onGo(i)} title={s.title}>
+              <span className="toc-title">{s.title}</span>
+              {counts[i] > 0 && <span className="toc-count">{counts[i]}</span>}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="faint toc-empty">{known ? 'No headings found in this document.' : 'Looking for headings…'}</p>
+      )}
+      {sections.length > 0 && <p className="toc-keys faint">[ and ] jump between headings</p>}
+    </nav>
   );
 }

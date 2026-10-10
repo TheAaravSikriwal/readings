@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
 import { Tree } from './tree';
-import type { Article, Bookmark, Highlight, Library, Link, MapSettings, Topic } from './types';
+import type { Article, Bookmark, Highlight, Library, Link, MapSettings, Section, Topic } from './types';
 
 /** Editing only exists on the local dev server; the built website is read-only. */
 export const EDITABLE = import.meta.env.DEV;
@@ -331,6 +331,15 @@ export const actions = {
       const a = article(articleId);
       if (a) a.highlights = a.highlights.map((x) => (x.id === hid ? { ...x, ...patch } : x));
     }, fieldKey('hl', hid, patch));
+  },
+
+  /** The headings found in a reading. Not an edit of yours, so not on the undo list. */
+  setOutline(id: string, outline: { v: number; sections: Section[] }) {
+    const a = article(id);
+    if (!a) return;
+    a.outline = outline;
+    set({ tree: new Tree(state.lib), rev: state.rev + 1, save: EDITABLE ? 'saving' : state.save });
+    scheduleSave();
   },
 
   addBookmark(articleId: string, b: { p?: number; y: number }) {

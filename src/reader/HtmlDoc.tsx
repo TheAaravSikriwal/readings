@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import DOMPurify from 'dompurify';
 import { SelectionPop, type MarkMode } from './SelectionPop';
 import { hasNote } from '../notes';
-import type { Highlight } from '../types';
+import type { Highlight, Section } from '../types';
+import { htmlOutline } from './outline';
 
 interface Props {
   url: string;
@@ -12,6 +13,7 @@ interface Props {
   jump: { id: string; n: number } | null;
   onPick: (id: string | null, x: number, y: number) => void;
   onCreate: (h: { text: string; start: number; end: number }, mode: MarkMode, x: number, y: number) => void;
+  onOutline?: (sections: Section[]) => void;
 }
 
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
@@ -67,7 +69,8 @@ function placeMarkers(el: HTMLElement, highlights: Highlight[], active: string |
 }
 
 /** A saved web page, cleaned up, with highlights anchored by character offsets. */
-export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCreate }: Props) {
+export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCreate, onOutline }: Props) {
+  const outlined = useRef<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState<string | null>(null);
   const [pending, setPending] = useState<{ text: string; start: number; end: number; x: number; y: number } | null>(null);
@@ -109,7 +112,12 @@ export function HtmlDoc({ url, highlights, active, editable, jump, onPick, onCre
       if (start >= 0) wrap(el, start, end, h.id, `hl${kindClass}${h.id === active ? ' on' : ''}`);
     }
     placeMarkers(el, highlights, active);
-  }, [html, anchors, active]);
+    // The page's headings, once per page.
+    if (outlined.current !== html) {
+      outlined.current = html;
+      onOutline?.(htmlOutline(el));
+    }
+  }, [html, anchors, active]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Images load late and push text down; keep the markers next to their lines.
   const activeRef = useRef(active);

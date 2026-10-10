@@ -4,7 +4,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { openPdf, pdfjs } from './pdfjs';
 import { SelectionPop, type MarkMode } from './SelectionPop';
 import { hasNote } from '../notes';
-import type { Highlight, Rect } from '../types';
+import type { Highlight, Rect, Section } from '../types';
 
 interface Props {
   url: string;
@@ -17,6 +17,9 @@ interface Props {
   jump: { id: string; n: number } | null;
   onPick: (id: string | null, x: number, y: number) => void;
   onCreate: (h: { text: string; rects: Rect[] }, mode: MarkMode, x: number, y: number) => void;
+  /** Look for the document's headings (once; they're kept with the reading after that). */
+  findOutline?: boolean;
+  onOutline?: (sections: Section[]) => void;
 }
 
 interface Pending {
@@ -61,7 +64,7 @@ function firstOnPage(marks: { h: Highlight; r: Rect }[]) {
   return marks.filter(({ h }) => hasNote(h) && !seen.has(h.id) && seen.add(h.id));
 }
 
-export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onPick, onCreate }: Props) {
+export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onPick, onCreate, findOutline, onOutline }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [sizes, setSizes] = useState<{ w: number; h: number }[]>([]);
@@ -92,6 +95,22 @@ export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onP
       task.destroy();
     };
   }, [url]);
+
+  // Its headings, in the background once the first pages are up.
+  useEffect(() => {
+    if (!doc || !findOutline || !onOutline) return;
+    let alive = true;
+    const t = setTimeout(() => {
+      import('./outline')
+        .then((m) => m.pdfOutline(doc))
+        .then((s) => alive && onOutline(s))
+        .catch(() => alive && onOutline([]));
+    }, 500);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [doc, findOutline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const el = box.current;

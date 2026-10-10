@@ -1,4 +1,4 @@
-import type { Article, Highlight, Library } from './types';
+import type { Article, Highlight, Library, Section } from './types';
 import type { Tree } from './tree';
 
 /** Reading order: page, then position on the page (PDF) or in the text (web page). */
@@ -6,6 +6,26 @@ export const readingOrder = (h: Highlight) =>
   h.rects?.length ? h.rects[0].p * 10 + h.rects[0].y : h.start !== undefined ? h.start / 1e7 : 1e9;
 
 export const sortNotes = (hs: Highlight[]) => [...hs].sort((a, b) => readingOrder(a) - readingOrder(b));
+
+/** The section a mark sits in: the last heading at or above it. -1 is before
+ * the first heading; null is a note that isn't on the page at all. */
+export function sectionIndex(h: Highlight, sections: Section[]): number | null {
+  const r = h.rects?.[0];
+  let k = -1;
+  if (r) {
+    sections.forEach((s, i) => {
+      if (s.p !== undefined && (s.p < r.p || (s.p === r.p && (s.y ?? 0) <= r.y + 0.01))) k = i;
+    });
+    return k;
+  }
+  if (h.start !== undefined && h.text) {
+    sections.forEach((s, i) => {
+      if (s.at !== undefined && s.at <= h.start!) k = i;
+    });
+    return k;
+  }
+  return null;
+}
 
 export const isDefinition = (h: Highlight) => h.kind === 'definition';
 export const isReference = (h: Highlight) => h.kind === 'reference';
@@ -190,8 +210,14 @@ export function articleMarkdown(a: Article, tree: Tree, lib: Library, level = 2)
       out.push(`- ${r.cite}${notes ? ` (${notes})` : ''}`);
     }
   }
+  // Quotes sit under the heading of the section they come from.
+  const sections = a.outline?.sections ?? [];
+  let section = -2;
   for (const h of sortNotes(a.highlights)) {
     if (isDefinition(h) || isReference(h)) continue;
+    const k = sections.length ? sectionIndex(h, sections) : null;
+    if (k !== null && k >= 0 && k !== section) out.push('', `_${sections[k].title}_`);
+    if (k !== null) section = k;
     const page = h.rects?.length ? ` (p. ${h.rects[0].p + 1})` : '';
     if (h.text) {
       out.push('', `> ${h.text}${page}`);

@@ -46,6 +46,20 @@ export interface Topic extends Base {
   note?: string;
 }
 
+/** A heading in a reading: from the PDF's own bookmarks, read off its text,
+ * or a saved web page's heading tags (src/reader/outline.ts). */
+export interface Section {
+  title: string;
+  /** 1 a heading, 2 a subheading, 3 below that */
+  level: number;
+  /** PDF: the page (from 0) and how far down it, 0 to 1 */
+  p?: number;
+  y?: number;
+  /** Web page: which heading tag (in order) and where it starts in the text */
+  i?: number;
+  at?: number;
+}
+
 /** A place in a reading to come back to. */
 export interface Bookmark {
   id: string;
@@ -70,6 +84,8 @@ export interface Article extends Base {
   summary?: string;
   /** Places to come back to. A reading with any is pinned on the map. */
   bookmarks?: Bookmark[];
+  /** Its headings, found when it was first opened. `v` is the finder's version. */
+  outline?: { v: number; sections: Section[] };
   highlights: Highlight[];
 }
 
