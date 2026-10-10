@@ -265,6 +265,7 @@ export class MapView {
 
     this.applyForces();
     this.g.d3Force('pull', this.pullForce() as any);
+    this.g.d3Force('bend', this.bendForce() as any);
     this.g.d3Force('collide', forceCollide((n: GNode) => n.r * 1.3 + 2).strength(0.75) as any);
 
     Object.assign(this.controls, {
@@ -293,7 +294,7 @@ export class MapView {
       onUp(e);
     };
     this.camera.far = 20000;
-    this.g.cameraPosition({ x: 0, y: 40, z: 900 });
+    this.g.cameraPosition({ x: 300, y: 260, z: 820 });
 
     this.listen();
     if (editable) this.buildOverlay();
@@ -982,6 +983,56 @@ export class MapView {
       .distanceMax(520 * sp);
   }
 
+  /** A chain of topics would otherwise pull itself straight, and a small map
+   * looks flat. Each bubble angles off the line its parent sits on (about 55
+   * degrees), each in its own direction around it, so branches spread through
+   * the space. Bubbles that connections pull elsewhere are left to that. */
+  private bendForce() {
+    let nodes: GNode[] = [];
+    const axis = new THREE.Vector3();
+    const off = new THREE.Vector3();
+    const side = new THREE.Vector3();
+    const want = new THREE.Vector3();
+    const dirOf = (id: string) => {
+      // A steady direction per bubble, from its id.
+      let h = 2166136261;
+      for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+      const a = ((h >>> 0) % 6283) / 1000;
+      const b = (((h >>> 12) % 3141) / 1000) - 1.57;
+      return new THREE.Vector3(Math.cos(a) * Math.cos(b), Math.sin(b), Math.sin(a) * Math.cos(b));
+    };
+    const force = (alpha: number) => {
+      const k = 0.1 * alpha;
+      for (const n of nodes) {
+        if (n.kind === 'root' || n.x === undefined || n.fx !== undefined) continue;
+        if ((this.pulls.get(n.id)?.length ?? 0) > 0 && this.settings.pull > 0) continue;
+        const p = this.nodes.get(this.parentOf.get(n.id) ?? '');
+        if (!p || p.x === undefined) continue;
+        const g = this.nodes.get(this.parentOf.get(p.id) ?? '') ?? this.root;
+        if (g.x === undefined) continue;
+        axis.set(p.x - g.x, (p.y ?? 0) - (g.y ?? 0), (p.z ?? 0) - (g.z ?? 0));
+        if (axis.lengthSq() < 1e-6) continue;
+        axis.normalize();
+        off.set(n.x - p.x, (n.y ?? 0) - (p.y ?? 0), (n.z ?? 0) - (p.z ?? 0));
+        const len = off.length();
+        if (len < 1e-3) continue;
+        side.copy(off).addScaledVector(axis, -off.dot(axis));
+        if (side.lengthSq() < len * len * 0.01) side.copy(dirOf(n.id)).addScaledVector(axis, -dirOf(n.id).dot(axis));
+        if (side.lengthSq() < 1e-6) continue;
+        side.normalize();
+        want.copy(axis).multiplyScalar(0.57).addScaledVector(side, 0.82).multiplyScalar(len);
+        const m = n as GNode & { vx?: number; vy?: number; vz?: number };
+        m.vx = (m.vx ?? 0) + (p.x + want.x - n.x) * k;
+        m.vy = (m.vy ?? 0) + ((p.y ?? 0) + want.y - (n.y ?? 0)) * k;
+        m.vz = (m.vz ?? 0) + ((p.z ?? 0) + want.z - (n.z ?? 0)) * k;
+      }
+    };
+    force.initialize = (ns: GNode[]) => {
+      nodes = ns;
+    };
+    return force;
+  }
+
   private linkDistance(l: GLink) {
     const a = l.source as GNode;
     const b = l.target as GNode;
@@ -1085,7 +1136,7 @@ export class MapView {
     v.labelEl.classList.toggle('private', n.hidden);
     v.labelEl.classList.toggle('marked', !!n.marked);
     v.labelEl.classList.toggle('done', !!n.done);
-    if (n.kind === 'article') v.mat.uniforms.uBright.value = n.annotated ? 1 : 0.6;
+    if (n.kind === 'article') v.mat.uniforms.uBright.value = n.annotated ? 1 : 0.72;
   }
 
   /** Recomputes how bright each bubble, label and line should be. */
@@ -1129,8 +1180,10 @@ export class MapView {
         else if (d !== 0) op *= 0.65;
       }
       base.set(n.id, op);
+      // What's out of focus steps back, but stays easy to see.
+      op = 0.42 + 0.58 * op;
       if (n.id === hov || hovN?.has(n.id)) [op, lab] = [Math.max(op, 0.9), true];
-      if (n.hidden) op *= 0.55;
+      if (n.hidden) op *= 0.6;
       n.opT = op;
       n.labT = lab ? 1 : 0;
       n.haloT = n.id === this.dropTarget ? 1 : n.id === this.marked ? 0.8 : n.id === sel ? 0.5 : 0;
@@ -1235,8 +1288,9 @@ export class MapView {
     }
 
     const camDist = this.camera.position.distanceTo(this.controls.target);
-    shared.uFogNear.value = this.fog.near = camDist * 1.3;
-    shared.uFogFar.value = this.fog.far = camDist * 3.6;
+    // A light haze far off, not a fade to black.
+    shared.uFogNear.value = this.fog.near = camDist * 1.8;
+    shared.uFogFar.value = this.fog.far = camDist * 6;
     const camPos = this.camera.position;
 
     for (const n of this.nodes.values()) {
