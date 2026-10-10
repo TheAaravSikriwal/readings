@@ -76,7 +76,7 @@ interface ReaderProps {
 const READING_LINE = 0.18;
 
 /** Which side-panel sections are folded away, remembered between readings. */
-type Fold = { terms?: boolean; refs?: boolean; marks?: boolean };
+type Fold = { terms?: boolean; refs?: boolean; marks?: boolean; summary?: boolean; notes?: boolean };
 const savedFold = (): Fold => {
   try {
     return JSON.parse(pref.get('rail-fold') ?? '{}') ?? {};
@@ -112,6 +112,8 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
   const [spots, setSpots] = useState<Record<string, { top: number; left: number; width: number }>>({});
   const [layoutTick, setLayoutTick] = useState(0);
   const [fold, setFold] = useState<Fold>(savedFold);
+  // Notes show as short previews; the one you're on opens in full. Or all of them, if you'd rather.
+  const [allOpen, setAllOpen] = useState(() => pref.get('notes-open') === '1');
   const toggleFold = (k: keyof Fold) =>
     setFold((f) => {
       const next = { ...f, [k]: !f[k] };
@@ -605,10 +607,17 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
                 ))}
             </section>
           )}
-          <section>
-            <h4>Summary</h4>
-            <Edit multiline value={a.summary} onChange={(summary) => actions.update(id, { summary })} placeholder="The point, in your words…" />
-            {!EDITABLE && !a.summary && <p className="faint">—</p>}
+          <section className={fold.summary ? 'folded' : ''}>
+            <button className="fold-head" onClick={() => toggleFold('summary')} aria-expanded={!fold.summary}>
+              <h4>Summary</h4>
+              <span className="fold-caret" />
+            </button>
+            {!fold.summary && (
+              <>
+                <Edit multiline value={a.summary} onChange={(summary) => actions.update(id, { summary })} placeholder="The point, in your words…" />
+                {!EDITABLE && !a.summary && <p className="faint">—</p>}
+              </>
+            )}
           </section>
           {(terms.length > 0 || (EDITABLE && kind)) && (
             <section className={`terms ${fold.terms ? 'folded' : ''}`}>
@@ -719,57 +728,82 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
                 ))}
             </section>
           )}
-          <section>
+          <section className={`notes ${fold.notes ? 'folded' : ''}`}>
             <div className="rail-head">
-              <h4>
-                Notes & highlights <span className="faint">{sorted.length || ''}</span>
-              </h4>
-              {EDITABLE && (
+              <button className="fold-head" onClick={() => toggleFold('notes')} aria-expanded={!fold.notes}>
+                <h4>
+                  Notes & highlights <span className="faint">{sorted.length || ''}</span>
+                </h4>
+                <span className="fold-caret" />
+              </button>
+              {!fold.notes && sorted.length > 1 && (
+                <button
+                  className="ghost tiny"
+                  onClick={() => {
+                    pref.set('notes-open', allOpen ? '0' : '1');
+                    setAllOpen(!allOpen);
+                  }}
+                  title={allOpen ? 'Show each note as a short preview' : 'Show every note in full'}
+                >
+                  {allOpen ? 'collapse all' : 'expand all'}
+                </button>
+              )}
+              {EDITABLE && !fold.notes && (
                 <button className="ghost tiny" onClick={addGeneralNote}>
                   + note
                 </button>
               )}
             </div>
-            {sorted.map((h) => (
-              <div
-                key={h.id}
-                data-h={h.id}
-                className={`hcard ${active === h.id ? 'on' : ''} ${h.text ? '' : 'general'}`}
-                onClick={() => {
-                  setActive(h.id);
-                  if (h.text) setJump({ id: h.id, n: Date.now() });
-                }}
-              >
-                {h.text && <blockquote className={h.kind === 'note' ? 'note' : ''}>{h.text}</blockquote>}
-                <div className="hmeta">
-                  <span className="faint">
-                    {h.rects?.length ? `p. ${h.rects[0].p + 1}` : ''}
-                    {h.text && hasNote(h) ? (h.rects?.length ? ' · note' : 'note') : ''}
-                  </span>
-                  {EDITABLE && (
-                    <button
-                      className="ghost tiny"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        actions.removeHighlight(id, h.id);
-                      }}
-                    >
-                      remove
-                    </button>
-                  )}
-                </div>
-                <Edit
-                  multiline
-                  enterFinishes
-                  className="hnote"
-                  value={h.note}
-                  autoFocus={fresh === h.id}
-                  onChange={(note) => actions.updateHighlight(id, h.id, { note })}
-                  placeholder={h.text ? 'Add a note…' : 'A note about this reading…'}
-                />
-              </div>
-            ))}
-            {!sorted.length && (
+            {!fold.notes &&
+              sorted.map((h) => {
+                const open = allOpen || active === h.id || fresh === h.id || (!h.text && !h.note.trim());
+                return (
+                  <div
+                    key={h.id}
+                    data-h={h.id}
+                    className={`hcard ${active === h.id ? 'on' : ''} ${open ? 'open' : 'shut'} ${h.text ? '' : 'general'}`}
+                    onClick={(e) => {
+                      // Clicking the passage of the open card closes it again.
+                      if (active === h.id && !allOpen && (e.target as HTMLElement).closest('blockquote')) return setActive(null);
+                      setActive(h.id);
+                      if (h.text) setJump({ id: h.id, n: Date.now() });
+                    }}
+                  >
+                    {h.text && <blockquote className={h.kind === 'note' ? 'note' : ''}>{h.text}</blockquote>}
+                    <div className="hmeta">
+                      <span className="faint">
+                        {h.rects?.length ? `p. ${h.rects[0].p + 1}` : ''}
+                        {open && h.text && hasNote(h) ? (h.rects?.length ? ' · note' : 'note') : ''}
+                      </span>
+                      {/* Closed: the note's first line, beside its page. */}
+                      {!open && h.note.trim() && <span className="hnote hnote-preview">{h.note}</span>}
+                      {EDITABLE && open && (
+                        <button
+                          className="ghost tiny"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            actions.removeHighlight(id, h.id);
+                          }}
+                        >
+                          remove
+                        </button>
+                      )}
+                    </div>
+                    {open && (
+                      <Edit
+                        multiline
+                        enterFinishes
+                        className="hnote"
+                        value={h.note}
+                        autoFocus={fresh === h.id}
+                        onChange={(note) => actions.updateHighlight(id, h.id, { note })}
+                        placeholder={h.text ? 'Add a note…' : 'A note about this reading…'}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            {!fold.notes && !sorted.length && (
               <p className="faint">
                 {EDITABLE
                   ? kind

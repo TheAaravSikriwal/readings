@@ -3085,3 +3085,60 @@ b.np-cite {
     max-height: 46vh;
   }
 }
+
+/* ------------------------------------------------- side panel, compact notes */
+
+/* A section's header that also folds it, next to its other buttons. */
+.rail-head {
+  gap: 12px;
+}
+.rail-head .fold-head {
+  flex: 1;
+  min-width: 0;
+}
+.rail-head .fold-head h4 {
+  margin-bottom: 8px;
+}
+.folded .rail-head .fold-head h4 {
+  margin-bottom: 0;
+}
+.r-rail section.folded + section {
+  margin-top: 18px;
+}
+
+/* A note as a short preview: two lines of the passage, two of the note. */
+.hcard.shut {
+  padding: 10px 14px 8px;
+  margin-bottom: 2px;
+}
+.hcard.shut blockquote {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 14.5px;
+}
+.hcard.shut .hmeta {
+  justify-content: flex-start;
+  gap: 10px;
+  margin: 5px 0 0;
+}
+.hcard.shut .hmeta > .faint {
+  flex: none;
+}
+.hcard.general.shut .hmeta > .faint:empty {
+  display: none;
+}
+.hnote-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+.hcard.general.shut .hnote-preview {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
