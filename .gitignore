@@ -1,0 +1,14 @@
+# Dependencies and builds
+node_modules/
+dist/
+
+# Your library: notes, PDFs, saved pages, backups and trash. Never public.
+data/
+
+# Publishing's private copy of the website and its build
+.publish/
+
+# Local editor and assistant settings
+.claude/
+.vscode/
+*.log

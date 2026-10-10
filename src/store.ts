@@ -1,0 +1,221 @@
+import { useSyncExternalStore } from 'react';
+import { api } from './api';
+import { Tree } from './tree';
+import type { Article, Highlight, Library, Link, Topic } from './types';
+
+/** Editing only exists on the local dev server; the built website is read-only. */
+export const EDITABLE = import.meta.env.DEV;
+
+export interface State {
+  lib: Library;
+  tree: Tree;
+  rev: number;
+  loaded: boolean;
+  error?: string;
+  save: 'saved' | 'saving' | 'error';
+  pending: ReadonlySet<string>;
+  toast: { text: string; id: number } | null;
+}
+
+const emptyLib = (): Library => ({ version: 1, title: 'Readings', nodes: [], links: [] });
+
+let state: State = {
+  lib: emptyLib(),
+  tree: new Tree(emptyLib()),
+  rev: 0,
+  loaded: false,
+  save: 'saved',
+  pending: new Set(),
+  toast: null,
+};
+
+const listeners = new Set<() => void>();
+const set = (patch: Partial<State>) => {
+  state = { ...state, ...patch };
+  listeners.forEach((l) => l());
+};
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => listeners.delete(l);
+};
+
+export const getState = () => state;
+export const useStore = () => useSyncExternalStore(subscribe, getState);
+
+export const uid = (prefix: string) =>
+  `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const now = () => new Date().toISOString();
+
+// ---- persistence (debounced; whole library is one small JSON file)
+
+let saveTimer: number | undefined;
+let dirty = false;
+
+export async function flush() {
+  if (!dirty) return;
+  dirty = false;
+  try {
+    await api.save(state.lib);
+    if (!dirty) set({ save: 'saved' });
+  } catch {
+    dirty = true;
+    set({ save: 'error' });
+  }
+}
+
+function commit(fn: (lib: Library) => void) {
+  fn(state.lib);
+  set({ tree: new Tree(state.lib), rev: state.rev + 1, save: EDITABLE ? 'saving' : state.save });
+  if (!EDITABLE) return;
+  dirty = true;
+  clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(flush, 450);
+}
+
+if (EDITABLE) {
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flush());
+}
+
+// ---- actions
+
+const article = (id: string) => state.tree.article(id);
+
+export const actions = {
+  async load() {
+    try {
+      const lib = await api.load();
+      lib.nodes ??= [];
+      lib.links ??= [];
+      lib.title ||= 'Readings';
+      for (const n of lib.nodes) if (n.type === 'article') n.highlights ??= [];
+      set({ lib, tree: new Tree(lib), rev: state.rev + 1, loaded: true });
+    } catch (e: any) {
+      set({ loaded: true, error: e?.message ?? String(e) });
+    }
+  },
+
+  replace(lib: Library) {
+    commit((l) => Object.assign(l, lib));
+  },
+
+  setTitle(title: string) {
+    commit((lib) => void (lib.title = title));
+  },
+
+  addTopic(parent: string | null, title: string) {
+    const id = uid('t');
+    commit((lib) => lib.nodes.push({ id, type: 'topic', title, parent, created: now() }));
+    return id;
+  },
+
+  addArticle(parent: string | null, fields: Partial<Article> & { id?: string }) {
+    const id = fields.id ?? uid('a');
+    commit((lib) =>
+      lib.nodes.push({ highlights: [], ...fields, id, type: 'article', title: fields.title || 'Untitled', parent, created: now() }),
+    );
+    return id;
+  },
+
+  update(id: string, patch: Partial<Omit<Topic, 'type'>> & Partial<Omit<Article, 'type'>>) {
+    commit(() => {
+      const n = state.tree.get(id);
+      if (n) Object.assign(n, patch);
+    });
+  },
+
+  /** Fills only fields that are still empty. The title is also replaced while it is still the placeholder. */
+  fill(id: string, patch: Partial<Article>, placeholderTitle?: string) {
+    const n = article(id);
+    if (!n) return;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(patch)) {
+      const cur = (n as unknown as Record<string, unknown>)[k];
+      if (v && (!cur || (k === 'title' && cur === placeholderTitle))) out[k] = v;
+    }
+    if (Object.keys(out).length) actions.update(id, out);
+  },
+
+  /** Moves a bubble into a topic (or to the top level). Refuses loops. */
+  move(id: string, parent: string | null) {
+    const t = state.tree;
+    if (parent === id || t.get(id)?.parent === parent) return false;
+    if (parent && (t.get(parent)?.type !== 'topic' || t.isInside(parent, id))) return false;
+    commit(() => void (t.get(id)!.parent = parent));
+    return true;
+  },
+
+  /** Deleting a topic keeps its contents: they move up one level. */
+  remove(id: string) {
+    const t = state.tree;
+    const n = t.get(id);
+    if (!n) return;
+    commit((lib) => {
+      for (const c of t.children(id)) c.parent = n.parent;
+      lib.nodes = lib.nodes.filter((x) => x.id !== id);
+      lib.links = lib.links.filter((l) => l.a !== id && l.b !== id);
+    });
+    if (n.type === 'article' && n.file && EDITABLE) api.trash(n.file).catch(() => {});
+  },
+
+  linkBetween(a: string, b: string): Link | undefined {
+    return state.lib.links.find((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a));
+  },
+
+  connect(a: string, b: string) {
+    if (a === b || actions.linkBetween(a, b)) return;
+    commit((lib) => lib.links.push({ id: uid('l'), a, b }));
+  },
+
+  toggleConnection(a: string, b: string) {
+    const l = actions.linkBetween(a, b);
+    if (l) actions.disconnect(l.id);
+    else actions.connect(a, b);
+  },
+
+  disconnect(linkId: string) {
+    commit((lib) => void (lib.links = lib.links.filter((l) => l.id !== linkId)));
+  },
+
+  updateLink(linkId: string, patch: Partial<Link>) {
+    commit((lib) => {
+      const l = lib.links.find((x) => x.id === linkId);
+      if (l) Object.assign(l, patch);
+    });
+  },
+
+  addHighlight(articleId: string, h: Omit<Highlight, 'id' | 'created' | 'note'>) {
+    const id = uid('h');
+    commit(() => {
+      const a = article(articleId);
+      if (a) a.highlights = [...a.highlights, { ...h, id, note: '', created: now() }];
+    });
+    return id;
+  },
+
+  updateHighlight(articleId: string, hid: string, patch: Partial<Highlight>) {
+    commit(() => {
+      const a = article(articleId);
+      if (a) a.highlights = a.highlights.map((x) => (x.id === hid ? { ...x, ...patch } : x));
+    });
+  },
+
+  removeHighlight(articleId: string, hid: string) {
+    commit(() => {
+      const a = article(articleId);
+      if (a) a.highlights = a.highlights.filter((x) => x.id !== hid);
+    });
+  },
+
+  setPending(id: string, on: boolean) {
+    const pending = new Set(state.pending);
+    if (on) pending.add(id);
+    else pending.delete(id);
+    set({ pending });
+  },
+
+  toast(text: string) {
+    const id = Date.now();
+    set({ toast: { text, id } });
+    setTimeout(() => state.toast?.id === id && set({ toast: null }), 4200);
+  },
+};
