@@ -29,6 +29,8 @@ interface Visual {
   lab: number;
   labShown: number;
   halo: number;
+  /** 0 hollow glass (still to read) … 1 solid pearl (completed), eased between. */
+  fill: number;
 }
 
 export interface GNode {
@@ -1099,7 +1101,10 @@ export class MapView {
   private objectFor(n: GNode): THREE.Object3D {
     if (n.kind === 'root') return new THREE.Object3D();
     const topic = n.kind === 'topic';
-    const mat = topic ? bubbleMaterial({ fill: 0, rim: 1, spec: 1, base: 0.03 }) : bubbleMaterial({ fill: 1, rim: 0 });
+    const solid = !topic && !!n.done;
+    const mat = topic
+      ? bubbleMaterial({ fill: 0, rim: 1, spec: 1, base: 0.03 })
+      : bubbleMaterial({ fill: solid ? 1 : 0, rim: 1.25, spec: 1, base: 0.07 });
     const mesh = new THREE.Mesh(GEO, mat);
     const haloMat = bubbleMaterial({ fill: 0, rim: 1.2, spec: 0, base: 0, additive: true });
     const haloMesh = new THREE.Mesh(GEO, haloMat);
@@ -1122,7 +1127,7 @@ export class MapView {
       group, mesh, mat, haloMesh, haloMat, label, labelEl, text,
       born: performance.now() + (performance.now() < this.introUntil ? 250 + n.depth * 170 + Math.random() * 280 : 0),
       phase: Math.random() * Math.PI * 2,
-      s: 0, sv: 0, op: 0, lab: 0, labShown: -1, halo: 0,
+      s: 0, sv: 0, op: 0, lab: 0, labShown: -1, halo: 0, fill: solid ? 1 : 0,
     };
     this.paint(n);
     return group;
@@ -1136,7 +1141,10 @@ export class MapView {
     v.labelEl.classList.toggle('private', n.hidden);
     v.labelEl.classList.toggle('marked', !!n.marked);
     v.labelEl.classList.toggle('done', !!n.done);
-    if (n.kind === 'article') v.mat.uniforms.uBright.value = n.annotated ? 1 : 0.72;
+    if (n.kind === 'article') {
+      v.mat.uniforms.uBright.value = 1;
+      v.mat.uniforms.uRim.value = n.annotated ? 1.4 : 1.1;
+    }
   }
 
   /** Recomputes how bright each bubble, label and line should be. */
@@ -1186,7 +1194,7 @@ export class MapView {
       if (n.hidden) op *= 0.6;
       n.opT = op;
       n.labT = lab ? 1 : 0;
-      n.haloT = n.id === this.dropTarget ? 1 : n.id === this.marked ? 0.8 : n.id === sel ? 0.5 : 0;
+      n.haloT = n.id === this.dropTarget ? 1 : n.id === this.marked ? 0.8 : n.id === sel ? 0.5 : n.done ? 0.28 : 0;
     }
 
     const opOf = (e: string | GNode) => this.nodes.get(end(e))?.opT ?? 0;
@@ -1243,7 +1251,9 @@ export class MapView {
               ? 0.7
               : ends.includes(n.id)
                 ? 0.4
-                : 0;
+                : n.done
+                  ? 0.28
+                  : 0;
     }
     for (const l of this.links.values()) {
       l.spark = false;
@@ -1304,6 +1314,14 @@ export class MapView {
       v.mesh.scale.setScalar(Math.max(1e-4, n.r * v.s * pulse));
       v.mesh.position.y = Math.sin(time * 0.8 + v.phase) * n.r * 0.07;
 
+      if (n.kind === 'article') {
+        const fillT = n.done ? 1 : 0;
+        if (Math.abs(fillT - v.fill) > 0.002) {
+          v.fill += (fillT - v.fill) * 0.06;
+          v.mat.uniforms.uFill.value = v.fill;
+          v.mat.depthWrite = v.fill > 0.5;
+        }
+      }
       v.op += (n.opT - v.op) * 0.08;
       v.mat.uniforms.uOpacity.value = v.op;
 
