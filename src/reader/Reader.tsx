@@ -18,7 +18,7 @@ import {
   sectionIndex,
   sortNotes,
 } from '../notes';
-import { OUTLINE_V } from './outline';
+import { htmlOutline, OUTLINE_V } from './outline';
 import type { MarkMode } from './SelectionPop';
 import { actions, EDITABLE, useStore } from '../store';
 import type { Bookmark, Highlight, Section } from '../types';
@@ -54,6 +54,33 @@ const savedPaper = (): Paper => {
   if (p === 'white' || p === 'warm' || p === 'dark') return p;
   return pref.get('invert') === '1' ? 'dark' : 'white';
 };
+
+/** Headings in document order. */
+const ordered = (ss: Section[]) =>
+  [...ss].sort((x, y) => (x.p ?? 0) - (y.p ?? 0) || (x.y ?? 0) - (y.y ?? 0) || (x.at ?? 0) - (y.at ?? 0));
+
+/** Whether a heading comes at or before a place in the document. */
+const before = (s: Section, spot: Pick<Section, 'p' | 'y' | 'at'>) =>
+  s.p !== undefined && spot.p !== undefined
+    ? s.p < spot.p || (s.p === spot.p && (s.y ?? 0) <= (spot.y ?? 0))
+    : (s.at ?? 0) <= (spot.at ?? 0);
+
+/** How far down a web page a character is, in px from the page's top. */
+function textTop(root: HTMLElement, at: number) {
+  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let pos = 0;
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    const len = (n as Text).data.length;
+    if (pos + len > at) {
+      const r = document.createRange();
+      r.setStart(n, at - pos);
+      r.setEnd(n, Math.min(len, at - pos + 1));
+      return r.getBoundingClientRect().top - root.getBoundingClientRect().top;
+    }
+    pos += len;
+  }
+  return null;
+}
 
 /** A zoom kept from last time (the normal view's, or focus mode's). */
 const savedZoom = (key: string) => {
@@ -146,7 +173,8 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
 
   // ---- headings: a contents list to move around by, and folders for the notes
 
-  const stored = a?.outline?.v === OUTLINE_V ? a.outline.sections : null;
+  const stored = a?.outline && (a.outline.edited || a.outline.v === OUTLINE_V) ? a.outline.sections : null;
+  const [findTick, setFindTick] = useState(0);
   const [found, setFound] = useState<Section[] | null>(null);
   const sections = useMemo(() => stored ?? found ?? [], [stored, found]);
   const outlineKnown = !!stored || found !== null;
@@ -159,6 +187,57 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
     },
     [id],
   );
+  // ---- your own headings: rename, re-level, remove, add, clear, or find them again
+
+  const editSections = useCallback((next: Section[]) => actions.editOutline(id, { v: OUTLINE_V, sections: ordered(next) }), [id]);
+
+  /** A new heading at a place in the document, at the level of the one above it. Returns where it landed. */
+  const addHeading = (spot: Pick<Section, 'p' | 'y' | 'at'>, title: string) => {
+    const above = sections.filter((x) => before(x, spot)).at(-1);
+    const s: Section = { title, level: above?.level ?? 1, ...spot };
+    const next = ordered([...sections, s]);
+    actions.editOutline(id, { v: OUTLINE_V, sections: next });
+    return next.indexOf(s);
+  };
+
+  /** The line you're reading, as a place in the document. */
+  const readingSpot = (): Pick<Section, 'p' | 'y' | 'at'> | null => {
+    const el = scroller.current;
+    if (!el) return null;
+    const line = el.scrollTop + el.clientHeight * 0.18;
+    if (kind === 'pdf') {
+      const pg = [...el.querySelectorAll<HTMLElement>('.pdf-page')].find((x) => x.offsetTop + x.offsetHeight > line);
+      if (!pg) return null;
+      return { p: Number(pg.dataset.page), y: Math.max(0, Math.min(1, (line - pg.offsetTop) / pg.offsetHeight)) };
+    }
+    const snap = el.querySelector<HTMLElement>('.snapshot');
+    if (!snap) return null;
+    const x = snap.getBoundingClientRect().left + 40;
+    const y = el.getBoundingClientRect().top + el.clientHeight * 0.18;
+    const doc = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    };
+    const r = doc.caretRangeFromPoint?.(x, y);
+    const pos = r ? { node: r.startContainer, offset: r.startOffset } : (() => {
+      const c = doc.caretPositionFromPoint?.(x, y);
+      return c ? { node: c.offsetNode, offset: c.offset } : null;
+    })();
+    if (!pos || !snap.contains(pos.node)) return { at: 0 };
+    const pre = document.createRange();
+    pre.setStart(snap, 0);
+    pre.setEnd(pos.node, pos.offset);
+    return { at: pre.toString().length };
+  };
+
+  const redetect = () => {
+    actions.update(id, { outline: undefined });
+    setFound(null);
+    const snap = scroller.current?.querySelector<HTMLElement>('.snapshot');
+    if (kind === 'html' && snap) onOutline(htmlOutline(snap));
+    else setFindTick((t) => t + 1);
+  };
+
   const [tocOpen, setTocOpen] = useState(() => pref.get('toc') === '1');
   const toggleToc = useCallback(
     () =>
@@ -417,8 +496,13 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
         const pg = pages.get(s.p);
         return pg && pg.offsetHeight ? pg.offsetTop + (s.y ?? 0) * pg.offsetHeight : null;
       }
-      const h = s.i !== undefined ? heads[s.i] : undefined;
-      return snap && h ? snap.offsetTop + h.offsetTop : null;
+      if (s.i !== undefined) {
+        const h = heads[s.i];
+        return snap && h ? snap.offsetTop + h.offsetTop : null;
+      }
+      // A heading you added to a web page: where its text is.
+      const t = snap && s.at !== undefined ? textTop(snap, s.at) : null;
+      return snap && t !== null ? snap.offsetTop + t : null;
     });
   }, [sections]);
 
@@ -543,6 +627,14 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
 
   const create = useCallback(
     (h: Omit<Highlight, 'id' | 'created' | 'note'>, mode: MarkMode, x: number, y: number) => {
+      if (mode === 'heading') {
+        const r = h.rects?.[0];
+        addHeading(r ? { p: r.p, y: r.y } : { at: h.start ?? 0 }, h.text.slice(0, 140));
+        setTocOpen(true);
+        pref.set('toc', '1');
+        actions.toast(`“${h.text.length > 60 ? `${h.text.slice(0, 60)}…` : h.text}” is in the contents now`);
+        return;
+      }
       const short = looksLikeTerm(h.text);
       const hid = actions.addHighlight(
         id,
@@ -559,7 +651,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
       // and Enter (or Esc) finishes, so the hands can stay on the keyboard.
       setPop({ id: hid, x, y });
     },
-    [id],
+    [id, sections], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const pick = useCallback((hid: string | null, x: number, y: number) => {
@@ -743,6 +835,20 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
               focus
             </button>
           )}
+          {(EDITABLE || a.done) && (
+            <button
+              className={`ghost done-btn ${a.done ? 'on' : ''}`}
+              disabled={!EDITABLE}
+              onClick={() => {
+                actions.update(id, { done: a.done ? undefined : new Date().toISOString() });
+                if (!a.done) actions.toast('Checked off: read and annotated.');
+              }}
+              title={a.done ? `Completed ${new Date(a.done).toLocaleDateString()}. Click to undo.` : 'Check it off when you’ve read and annotated it'}
+            >
+              <span className="done-box" />
+              {a.done ? 'completed' : 'complete'}
+            </button>
+          )}
           {EDITABLE && (
             <button
               className="ghost"
@@ -762,7 +868,22 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
 
       <div className={`r-body ${notesOnly ? 'notes-only' : ''} ${tocOpen && kind && !focus ? 'with-toc' : ''}`}>
         {tocOpen && kind && !focus && (
-          <Contents sections={sections} known={outlineKnown} cur={cur} counts={secCounts} onGo={goToSection} onClose={toggleToc} />
+          <Contents
+            sections={sections}
+            known={outlineKnown}
+            edited={!!a.outline?.edited}
+            cur={cur}
+            counts={secCounts}
+            onGo={goToSection}
+            onClose={toggleToc}
+            onEdit={editSections}
+            onAdd={() => {
+              const spot = readingSpot();
+              return spot ? addHeading(spot, 'New heading') : -1;
+            }}
+            onRedetect={redetect}
+            onClear={() => editSections([])}
+          />
         )}
         {!notesOnly && (
           <main className="r-doc" ref={scroller} onClick={turn} style={{ '--doc-zoom': zoom } as React.CSSProperties}>
@@ -801,6 +922,7 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
                 onPick={pick}
                 onCreate={create}
                 findOutline={!stored}
+                outlineTick={findTick}
                 onOutline={onOutline}
               />
             )}
@@ -1135,47 +1257,140 @@ export default function Reader({ id, onClose, focusHighlight, onAddReference, on
   );
 }
 
-/** Every heading in the document: where you are, and one click to go anywhere. */
+/** Every heading in the document: where you are, and one click to go anywhere.
+ * In the local app they can be edited: renamed, moved a level, removed, added. */
 function Contents({
   sections,
   known,
+  edited,
   cur,
   counts,
   onGo,
   onClose,
+  onEdit,
+  onAdd,
+  onRedetect,
+  onClear,
 }: {
   sections: Section[];
   known: boolean;
+  edited: boolean;
   cur: number;
   counts: number[];
   onGo: (i: number) => void;
   onClose: () => void;
+  onEdit: (sections: Section[]) => void;
+  /** Adds a heading at the line you're reading; returns its place in the list. */
+  onAdd: () => number;
+  onRedetect: () => void;
+  onClear: () => void;
 }) {
   const list = useRef<HTMLDivElement>(null);
+  const [editing, setEditing] = useState(false);
+  const [arm, setArm] = useState(false);
+  const [focusAt, setFocusAt] = useState<number | null>(null);
   useEffect(() => {
-    list.current?.querySelector('.toc-row.on')?.scrollIntoView({ block: 'nearest' });
+    list.current?.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
   }, [cur]);
+  useEffect(() => {
+    if (!arm) return;
+    const t = setTimeout(() => setArm(false), 3500);
+    return () => clearTimeout(t);
+  }, [arm]);
+
+  const change = (i: number, patch: Partial<Section>) => onEdit(sections.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  const level = (i: number, by: number) => change(i, { level: Math.max(1, Math.min(3, sections[i].level + by)) });
+  const add = () => {
+    const i = onAdd();
+    setEditing(true);
+    setFocusAt(i);
+  };
+
+  const tools = EDITABLE && (editing || !sections.length) && (
+    <div className="toc-tools">
+      <button className="ghost tiny" onClick={add}>
+        + heading at the line you’re reading
+      </button>
+      <p className="faint toc-tip">Or select a heading in the text and press T.</p>
+      <div className="toc-tools-row">
+        <button className="ghost tiny" onClick={onRedetect} title="Throw these away and look for the headings again">
+          find them again
+        </button>
+        {sections.length > 0 && (
+          <button className={`ghost tiny ${arm ? 'armed' : ''}`} onClick={() => (arm ? (onClear(), setArm(false)) : setArm(true))}>
+            {arm ? 'click again to clear all' : 'clear all'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <nav className="toc" aria-label="Contents">
+    <nav className={`toc ${editing ? 'editing' : ''}`} aria-label="Contents">
       <div className="toc-head">
         <h4>Contents</h4>
-        <button className="icon" onClick={onClose} aria-label="Hide contents">
-          ×
-        </button>
+        <span className="toc-head-tools">
+          {EDITABLE && sections.length > 0 && (
+            <button className={`ghost tiny ${editing ? 'on' : ''}`} onClick={() => setEditing(!editing)}>
+              {editing ? 'done' : 'edit'}
+            </button>
+          )}
+          <button className="icon" onClick={onClose} aria-label="Hide contents">
+            ×
+          </button>
+        </span>
       </div>
       {sections.length ? (
         <div className="toc-list" ref={list}>
-          {sections.map((s, i) => (
-            <button key={i} className={`toc-row lvl-${s.level} ${cur === i ? 'on' : ''}`} onClick={() => onGo(i)} title={s.title}>
-              <span className="toc-title">{s.title}</span>
-              {counts[i] > 0 && <span className="toc-count">{counts[i]}</span>}
-            </button>
-          ))}
+          {sections.map((s, i) =>
+            editing ? (
+              <div key={i} className={`toc-edit lvl-${s.level} ${cur === i ? 'on' : ''}`}>
+                <input
+                  value={s.title}
+                  autoFocus={focusAt === i}
+                  onFocus={(e) => focusAt === i && e.currentTarget.select()}
+                  onChange={(e) => change(i, { title: e.target.value })}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur();
+                    if (e.key === 'Tab') {
+                      e.preventDefault();
+                      level(i, e.shiftKey ? -1 : 1);
+                    }
+                  }}
+                  onBlur={() => setFocusAt(null)}
+                  aria-label="Heading"
+                />
+                <button className="toc-btn" onClick={() => level(i, -1)} disabled={s.level <= 1} title="Up a level (Shift+Tab)">
+                  ‹
+                </button>
+                <button className="toc-btn" onClick={() => level(i, 1)} disabled={s.level >= 3} title="Down a level (Tab)">
+                  ›
+                </button>
+                <button className="toc-btn" onClick={() => onGo(i)} title="Go there">
+                  ↓
+                </button>
+                <button className="toc-btn" onClick={() => onEdit(sections.filter((_, j) => j !== i))} title="Remove this heading">
+                  ×
+                </button>
+              </div>
+            ) : (
+              <button key={i} className={`toc-row lvl-${s.level} ${cur === i ? 'on' : ''}`} onClick={() => onGo(i)} title={s.title}>
+                <span className="toc-title">{s.title}</span>
+                {counts[i] > 0 && <span className="toc-count">{counts[i]}</span>}
+              </button>
+            ),
+          )}
         </div>
       ) : (
-        <p className="faint toc-empty">{known ? 'No headings found in this document.' : 'Looking for headings…'}</p>
+        <p className="faint toc-empty">{known ? 'No headings in this document yet.' : 'Looking for headings…'}</p>
       )}
-      {sections.length > 0 && <p className="toc-keys faint">[ and ] jump between headings</p>}
+      {tools}
+      {!editing && sections.length > 0 && (
+        <p className="toc-keys faint">
+          [ and ] jump between headings{edited ? ' · your edits are kept' : ''}
+        </p>
+      )}
     </nav>
   );
 }

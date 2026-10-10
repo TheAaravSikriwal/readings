@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { EditScreen } from './edit/EditScreen';
+import { EditScreen, nudge } from './edit/EditScreen';
 import { useEditor } from './edit/useEditor';
 import { attachPdf, importPdf, looksLikeUrl } from './importer';
 import { MapCanvas } from './map/MapCanvas';
@@ -220,6 +220,10 @@ export default function App() {
       else if (EDITABLE && e.key === 'n' && !e.metaKey && !e.ctrlKey) newTopic(focus);
       else if (EDITABLE && e.key === 'a' && !e.metaKey && !e.ctrlKey) setAdding({});
       else if (EDITABLE && e.key === 'e' && !e.metaKey && !e.ctrlKey) enterEdit();
+      else if (e.key.startsWith('Arrow')) {
+        e.preventDefault();
+        nudge(mapApi, e.key);
+      }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -477,8 +481,8 @@ export default function App() {
       {!empty && !shelfUp && !editing && (
         <div className="hint">
           {EDITABLE
-            ? 'click to open · double-click to read · drag onto a topic to move · shift-click to connect · right-click for more'
-            : 'click a bubble to open · double-click to read · drag to orbit · scroll to zoom'}
+            ? 'drag to move around · right-drag to turn · scroll to zoom · click to open · double-click to read · drag a bubble onto a topic to move it · shift-click to connect · right-click for more'
+            : 'drag to move around · right-drag to turn · scroll to zoom · click a bubble to open · double-click to read'}
         </div>
       )}
 

@@ -50,6 +50,22 @@ export async function attachPdf(articleId: string, file: File) {
   }
 }
 
+/** Puts a different PDF in a reading (the wrong one went in), keeping everything
+ * else about it. It's saved under a new name, so Ctrl+Z brings the old one back. */
+export async function replacePdf(articleId: string, file: File) {
+  actions.setPending(articleId, true);
+  try {
+    const { file: saved } = await api.upload(`${articleId}-${Date.now().toString(36)}`, file);
+    // Its headings belong to the old file: find the new one's.
+    actions.update(articleId, { file: saved, outline: undefined });
+    actions.toast('Replaced the PDF. Marks made on the old one stay, but may not line up with this one.');
+  } catch (e: any) {
+    actions.toast(`Couldn't use ${file.name}: ${e?.message ?? e}`);
+  } finally {
+    actions.setPending(articleId, false);
+  }
+}
+
 /** Grabs the PDF or a clean text copy behind an article's link. */
 export async function fetchInto(articleId: string, url: string, placeholder?: string) {
   actions.setPending(articleId, true);

@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
+import { attachPdf, replacePdf } from '../importer';
 import { citeLink, referenceList, scholarUrl } from '../notes';
 import { actions, EDITABLE, useStore } from '../store';
 import { Edit } from './Edit';
@@ -21,6 +22,7 @@ export function Card({ id, onRead, onConnect, onOpen, onReadAt, onAddReference, 
   const { tree, lib, rev, pending } = useStore();
   const a = tree.article(id);
   const refs = useMemo(() => referenceList(lib, id), [lib, rev, id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const picker = useRef<HTMLInputElement>(null);
   if (!a) return null;
 
   const links = lib.links
@@ -67,10 +69,51 @@ export function Card({ id, onRead, onConnect, onOpen, onReadAt, onAddReference, 
         )
       )}
 
-      <button className="pill solid" onClick={onRead} disabled={busy}>
-        {busy ? 'fetching…' : 'read'}
-        {a.highlights.length > 0 && <span className="count">{a.highlights.length}</span>}
-      </button>
+      <div className="card-actions">
+        <button className="pill solid" onClick={onRead} disabled={busy}>
+          {busy ? 'working…' : 'read'}
+          {a.highlights.length > 0 && <span className="count">{a.highlights.length}</span>}
+        </button>
+        {EDITABLE ? (
+          <button
+            className={`pill done-pill ${a.done ? 'on' : ''}`}
+            onClick={() => set({ done: a.done ? undefined : new Date().toISOString() })}
+            title={a.done ? 'Click to undo' : 'Check it off when you’ve read and annotated it'}
+          >
+            <span className="done-box" />
+            {a.done ? 'completed' : 'complete'}
+          </button>
+        ) : (
+          a.done && (
+            <span className="done-note">
+              <span className="done-box on" /> finished
+            </span>
+          )
+        )}
+      </div>
+      {a.done && EDITABLE && <p className="done-when faint">Completed {new Date(a.done).toLocaleDateString()}</p>}
+
+      {EDITABLE && (
+        <div className="card-file">
+          <span className="faint">
+            {a.file ? (a.file.endsWith('.pdf') ? 'PDF attached.' : 'A saved copy of the page.') : 'No file attached.'}
+          </span>
+          <button className="ghost tiny" onClick={() => picker.current?.click()} disabled={busy}>
+            {a.file ? 'replace with another PDF…' : 'attach a PDF…'}
+          </button>
+          <input
+            ref={picker}
+            type="file"
+            accept="application/pdf"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) (a.file ? replacePdf : attachPdf)(id, f);
+              e.target.value = '';
+            }}
+          />
+        </div>
+      )}
 
       {EDITABLE && a.file && (
         <label className="share">

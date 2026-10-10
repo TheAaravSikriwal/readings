@@ -200,6 +200,7 @@ export function articleMarkdown(a: Article, tree: Tree, lib: Library, level = 2)
   const out = [heading(level, a.title)];
   const meta = [a.authors, a.year, a.site].filter(Boolean).join(' · ');
   if (meta) out.push('', meta);
+  if (a.done) out.push('', `_Finished ${a.done.slice(0, 10)}_`);
   if (a.url) out.push('', `Source: <${a.url}>`);
   if (a.summary?.trim()) out.push('', `**Summary.** ${a.summary.trim()}`);
   const terms = glossary(lib, a.id);

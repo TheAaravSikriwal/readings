@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { attachPdf, replacePdf } from '../importer';
 import { pullShare, type MapView } from '../map/MapView';
 import { actions, getState, useStore } from '../store';
 import type { LibNode } from '../types';
@@ -12,6 +13,12 @@ interface Props {
   onRead: (id: string) => void;
   onExit: () => void;
 }
+
+/** Arrow keys slide the view, like dragging it. */
+export const nudge = (api: MutableRefObject<MapView | null>, key: string) => {
+  const d = 110;
+  api.current?.nudge(key === 'ArrowLeft' ? -d : key === 'ArrowRight' ? d : 0, key === 'ArrowUp' ? -d : key === 'ArrowDown' ? d : 0);
+};
 
 const typing = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable]');
 
@@ -40,6 +47,7 @@ export function EditScreen({ ed, api, layersOpen, onLayers, onRead, onExit }: Pr
       else if (k === 'f') run(ed.fit);
       else if (k === 'l') run(() => onLayers(!layersOpen));
       else if (k === 'e') run(onExit);
+      else if (e.key.startsWith('Arrow')) run(() => nudge(api, e.key));
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -191,6 +199,7 @@ function Layers({ ed, api, onClose }: { ed: Editor; api: MutableRefObject<MapVie
           </span>
           {n.pin && <span className="ly-flag">pinned</span>}
           {n.hidden && <span className="ly-flag">hidden</span>}
+          {n.type === 'article' && n.done && <span className="ly-flag">done</span>}
         </div>
         {topic && !closed && !path && order(kids).map((k) => row(k, depth + 1))}
       </div>
@@ -529,7 +538,26 @@ function BubblePanel({ n, ed, onRead }: { n: LibNode; ed: Editor; onRead: (id: s
             <button className="pill small solid" onClick={() => onRead(n.id)}>
               open it
             </button>
+            <label className="pill small">
+              {n.file ? 'replace PDF…' : 'attach a PDF…'}
+              <input
+                type="file"
+                accept="application/pdf"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) (n.file ? replacePdf : attachPdf)(n.id, f);
+                  e.target.value = '';
+                }}
+              />
+            </label>
           </div>
+          <Toggle
+            on={!!n.done}
+            label="Completed"
+            hint={n.done ? `Checked off ${new Date(n.done).toLocaleDateString()}` : 'Read and annotated'}
+            onChange={(on) => set({ done: on ? new Date().toISOString() : undefined })}
+          />
           <p className="ed-help">
             {n.highlights.length} marks{n.summary?.trim() ? ', a summary' : ''}
             {n.file ? `, ${n.file.endsWith('.pdf') ? 'a PDF' : 'a saved page'}` : ', no file'}

@@ -21,6 +21,7 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 
 | Do this | To |
 | --- | --- |
+| drag empty space, or the arrow keys | move around the map. Right-drag (or Shift-drag) turns it, scroll zooms |
 | click a bubble | open a topic (like a folder) or an article's card |
 | double-click a pearl / **read** | open the reader |
 | drag a bubble onto a topic | move it there |
@@ -44,7 +45,9 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 | click a highlight or margin dot | read or edit its note |
 | **+ note** in the side panel | a note about the whole reading |
 | `←` `→`, PgUp/PgDn, or the ‹ › pager | previous / next page |
-| **contents** (`O`) | the document's headings and subheadings beside the page: where you are, and a click to go anywhere |
+| **contents** (`O`) | the document's headings and subheadings beside the page: where you are, and a click to go anywhere. **edit** renames them, moves them a level (Tab / Shift+Tab), removes or adds them, clears them all, or finds them again; your edits are never found over |
+| select text → **heading** (`T`) | put that line in the contents, right where it is |
+| **complete** | check the reading off once it's read and annotated; its label on the map gets a ✓ |
 | `[` `]` | previous / next heading |
 | **focus** (`F`) | full screen, just the page, no edges. Click left/right of it to turn the page |
 | **paper** (`W`) | page colour: white, warm or dark |
@@ -97,6 +100,9 @@ The **layers** list on the left has every bubble: click one to fly to it, drag o
 to move it. With nothing selected the right panel holds the map's own settings: its name, how
 roomy the layout is, how strongly connections pull bubbles away from their topics, pinned
 bubbles, and the idle drift. Every change is one Ctrl+Z away.
+
+A reading's card can **replace** its PDF with another (the wrong one went in) without making the
+bubble again: everything else stays, and Ctrl+Z brings the old file back.
 
 **export** in the bottom bar downloads all your notes and summaries (or one topic) as
 Markdown, or a full JSON backup.

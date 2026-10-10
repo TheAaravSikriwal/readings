@@ -19,6 +19,8 @@ interface Props {
   onCreate: (h: { text: string; rects: Rect[] }, mode: MarkMode, x: number, y: number) => void;
   /** Look for the document's headings (once; they're kept with the reading after that). */
   findOutline?: boolean;
+  /** Changes when the headings should be looked for again. */
+  outlineTick?: number;
   onOutline?: (sections: Section[]) => void;
 }
 
@@ -64,7 +66,7 @@ function firstOnPage(marks: { h: Highlight; r: Rect }[]) {
   return marks.filter(({ h }) => hasNote(h) && !seen.has(h.id) && seen.add(h.id));
 }
 
-export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onPick, onCreate, findOutline, onOutline }: Props) {
+export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onPick, onCreate, findOutline, outlineTick, onOutline }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [sizes, setSizes] = useState<{ w: number; h: number }[]>([]);
@@ -110,7 +112,7 @@ export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onP
       alive = false;
       clearTimeout(t);
     };
-  }, [doc, findOutline]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [doc, findOutline, outlineTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const el = box.current;

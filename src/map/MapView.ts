@@ -43,6 +43,8 @@ export interface GNode {
   marked?: boolean;
   /** Held at a spot (edit screen). */
   pin?: [number, number, number];
+  /** Read and annotated: its label carries a check. */
+  done?: boolean;
   pending: boolean;
   /** brightness targets, set by retarget() and eased toward in tick() */
   opT: number;
@@ -275,6 +277,12 @@ export class MapView {
       minDistance: 6,
       maxDistance: 5000,
       autoRotateSpeed: 0,
+      // Drag to slide the map around, like a sheet on a table; right-drag (or
+      // Shift-drag) to turn it. One finger slides, two pinch and turn.
+      screenSpacePanning: true,
+      panSpeed: 1,
+      mouseButtons: { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE },
+      touches: { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE },
     });
     // 3d-force-graph fires a synthetic pointerup after a node drag; OrbitControls
     // throws on pointers it never saw. Ignore those.
@@ -359,6 +367,7 @@ export class MapView {
       g.pending = pending.has(n.id);
       g.annotated = n.type === 'article' && (n.highlights.length > 0 || !!n.summary?.trim());
       g.marked = n.type === 'article' && !!n.bookmarks?.length;
+      g.done = n.type === 'article' && !!n.done;
       // Pinned in the edit screen: held there (unless it's being dragged right now).
       if (this.dragging !== n.id) {
         const pin = n.pin;
@@ -545,6 +554,26 @@ export class MapView {
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(this.camera.getWorldDirection(new THREE.Vector3()), this.controls.target);
     const out = new THREE.Vector3();
     return ray.ray.intersectPlane(plane, out) ? { x: out.x, y: out.y, z: out.z } : null;
+  }
+
+  /** Slides the view by about this many pixels (arrow keys). */
+  nudge(dx: number, dy: number) {
+    this.flight = null;
+    this.lastInput = performance.now();
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    const k = (2 * dist * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)) / Math.max(1, this.el.clientHeight);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 0).multiplyScalar(dx * k);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 1).multiplyScalar(-dy * k);
+    const move = right.add(up);
+    const t = performance.now();
+    this.flight = {
+      p0: this.camera.position.clone(),
+      t0: this.controls.target.clone(),
+      p1: this.camera.position.clone().add(move),
+      t1: this.controls.target.clone().add(move),
+      start: t,
+      dur: 180,
+    };
   }
 
   /** The slow spin when nothing's touched. */
@@ -1055,6 +1084,7 @@ export class MapView {
     if (v.text.textContent !== t) v.text.textContent = t;
     v.labelEl.classList.toggle('private', n.hidden);
     v.labelEl.classList.toggle('marked', !!n.marked);
+    v.labelEl.classList.toggle('done', !!n.done);
     if (n.kind === 'article') v.mat.uniforms.uBright.value = n.annotated ? 1 : 0.6;
   }
 

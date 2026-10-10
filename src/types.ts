@@ -84,8 +84,11 @@ export interface Article extends Base {
   summary?: string;
   /** Places to come back to. A reading with any is pinned on the map. */
   bookmarks?: Bookmark[];
-  /** Its headings, found when it was first opened. `v` is the finder's version. */
-  outline?: { v: number; sections: Section[] };
+  /** Its headings, found when it was first opened. `v` is the finder's version;
+   * `edited` means you changed them, and they're never found over again. */
+  outline?: { v: number; sections: Section[]; edited?: boolean };
+  /** When you checked it off as read and annotated. */
+  done?: string;
   highlights: Highlight[];
 }
 

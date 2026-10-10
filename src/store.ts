@@ -342,6 +342,14 @@ export const actions = {
     scheduleSave();
   },
 
+  /** Your own changes to a reading's headings (an edit, so Ctrl+Z undoes it). */
+  editOutline(id: string, outline: { v: number; sections: Section[] }) {
+    commit(() => {
+      const a = article(id);
+      if (a) a.outline = { ...outline, edited: true };
+    }, `outline:${id}`);
+  },
+
   addBookmark(articleId: string, b: { p?: number; y: number }) {
     const id = uid('b');
     commit(() => {
