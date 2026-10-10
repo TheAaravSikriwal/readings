@@ -423,6 +423,7 @@ export default function Reader({ id, onClose }: { id: string; onClose: () => voi
                 </div>
                 <Edit
                   multiline
+                  enterFinishes
                   className="hnote"
                   value={h.note}
                   autoFocus={fresh === h.id}

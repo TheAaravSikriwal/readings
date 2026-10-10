@@ -48,6 +48,7 @@ export function TopBar({ focus, onGo, onRename, onConnect }: Props) {
         <Edit
           className="topic-note"
           multiline
+          enterFinishes
           value={here.note}
           onChange={(note) => actions.update(here.id, { note })}
           placeholder="A note about this topic…"

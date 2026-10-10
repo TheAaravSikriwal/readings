@@ -1829,3 +1829,8 @@ mark.hl.note.on {
 .reader.focus.idle * {
   cursor: none;
 }
+
+.np-hint {
+  margin-right: auto;
+  font-size: 10.5px;
+}

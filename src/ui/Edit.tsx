@@ -8,10 +8,14 @@ interface Props {
   multiline?: boolean;
   className?: string;
   autoFocus?: boolean;
+  /** Notes: Enter finishes (Shift+Enter starts a new line). */
+  enterFinishes?: boolean;
+  /** Called when Enter or Escape finishes the field. */
+  onDone?: () => void;
 }
 
 /** A borderless field that saves as you type. Plain text on the read-only site. */
-export function Edit({ value, onChange, placeholder, multiline, className = '', autoFocus }: Props) {
+export function Edit({ value, onChange, placeholder, multiline, className = '', autoFocus, enterFinishes, onDone }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useLayoutEffect(() => {
@@ -33,7 +37,16 @@ export function Edit({ value, onChange, placeholder, multiline, className = '', 
         placeholder={placeholder}
         autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          const finish =
+            e.key === 'Escape' ||
+            (enterFinishes && e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing);
+          if (!finish) return;
+          e.preventDefault();
+          e.currentTarget.blur();
+          onDone?.();
+        }}
       />
     );
   }

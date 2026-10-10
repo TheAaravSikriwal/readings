@@ -44,11 +44,21 @@ export function NotePop({ h, x, y, editable, onChange, onRemove, onClose }: Prop
     >
       {quote && <blockquote>{quote}</blockquote>}
       {editable ? (
-        <Edit multiline className="np-note" autoFocus value={h.note} onChange={onChange} placeholder="Write a note about this line…" />
+        <Edit
+          multiline
+          enterFinishes
+          className="np-note"
+          autoFocus
+          value={h.note}
+          onChange={onChange}
+          onDone={onClose}
+          placeholder="Write a note about this line…"
+        />
       ) : (
         <p className="np-note">{h.note || <span className="faint">No note, just highlighted.</span>}</p>
       )}
       <div className="np-actions">
+        {editable && <span className="np-hint faint">enter to finish · shift+enter for a new line</span>}
         {editable && (
           <button className="ghost tiny" onClick={onRemove}>
             remove
