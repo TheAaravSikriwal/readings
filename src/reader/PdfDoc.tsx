@@ -31,33 +31,198 @@ interface Pending {
   y: number;
 }
 
-/** Selected text, with a space wherever pdf.js marked a line end. */
-function rangeText(range: Range) {
-  let out = '';
-  const walk = (n: Node) => {
-    if (n.nodeType === Node.TEXT_NODE) out += (n as Text).data;
-    else if ((n as Element).tagName === 'BR') out += ' ';
-    else n.childNodes.forEach(walk);
-  };
-  range.cloneContents().childNodes.forEach(walk);
-  return out.replace(/\s+/g, ' ').trim();
+/** The selected part of each text-layer text node, in reading order, and each
+ * line end pdf.js marked. Only the pages' text: never the page numbers between. */
+function eachPiece(range: Range, onText: (text: string, span: Element) => void, onBreak: () => void) {
+  let root = range.commonAncestorContainer;
+  if (root.nodeType === Node.TEXT_NODE) root = root.parentNode!;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  for (let n = walker.currentNode as Node | null; n; n = walker.nextNode()) {
+    if (!range.intersectsNode(n)) continue;
+    const span = n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as Element);
+    if (!span?.closest('.textLayer')) continue;
+    if (n.nodeType === Node.ELEMENT_NODE) {
+      if ((n as Element).tagName === 'BR') onBreak();
+      continue;
+    }
+    const t = n as Text;
+    const from = t === range.startContainer ? range.startOffset : 0;
+    const to = t === range.endContainer ? range.endOffset : t.length;
+    if (to > from) onText(t.data.slice(from, to), span);
+  }
 }
 
-/** Joins the per-span boxes a selection produces into one box per line. */
-function mergeRects(rects: Rect[]): Rect[] {
-  const sorted = [...rects].sort((a, b) => a.p - b.p || a.y - b.y || a.x - b.x);
-  const out: Rect[] = [];
-  for (const r of sorted) {
-    const last = out.at(-1);
-    if (last && last.p === r.p && Math.abs(last.y - r.y) < Math.min(last.h, r.h) * 0.6 && r.x <= last.x + last.w + 0.012) {
-      const right = Math.max(last.x + last.w, r.x + r.w);
-      const top = Math.min(last.y, r.y);
-      last.h = Math.max(last.y + last.h, r.y + r.h) - top;
-      last.y = top;
-      last.w = right - last.x;
-    } else out.push({ ...r });
+/** Selected text. A space wherever the words are apart on the page, and a word
+ * broken over a line end ("sub-" / "stituted") put back together. */
+function rangeText(range: Range) {
+  let out = '';
+  let prev: DOMRect | null = null;
+  eachPiece(
+    range,
+    (text, span) => {
+      const b = span.getBoundingClientRect();
+      if (prev && out && !/\s$/.test(out) && !/^\s/.test(text)) {
+        const h = Math.min(prev.height, b.height);
+        if (Math.abs(b.top - prev.top) > h * 0.5 || b.left - prev.right > h * 0.2) out += ' ';
+      }
+      out += text;
+      prev = b;
+    },
+    () => (out += '\u0000'),
+  );
+  return out
+    .replace(/(\p{L})-\s*\u0000\s*(?=\p{Ll})/gu, '$1')
+    .replace(/[\s\u0000]+/g, ' ')
+    .trim();
+}
+
+/** The boxes of the selected text alone, never a whole span or page that happens
+ * to be inside it. */
+function textRects(range: Range) {
+  const out: DOMRect[] = [];
+  const part = document.createRange();
+  let root = range.commonAncestorContainer;
+  if (root.nodeType === Node.TEXT_NODE) root = root.parentNode!;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (!range.intersectsNode(n) || !n.parentElement?.closest('.textLayer')) continue;
+    const t = n as Text;
+    part.selectNodeContents(t);
+    if (t === range.startContainer) part.setStart(t, range.startOffset);
+    if (t === range.endContainer) part.setEnd(t, range.endOffset);
+    for (const cr of part.getClientRects()) out.push(cr);
   }
   return out;
+}
+
+/** A selection as boxes on its pages, and where on screen it ends. */
+function selectionBoxes(range: Range, root: HTMLElement) {
+  const pages = [...root.querySelectorAll<HTMLElement>('.pdf-page')].map((el) => ({ el, b: el.getBoundingClientRect() }));
+  const rects: Rect[] = [];
+  let last: DOMRect | null = null;
+  for (const cr of textRects(range)) {
+    if (cr.width < 1 || cr.height < 1) continue;
+    const cx = cr.left + cr.width / 2;
+    const cy = cr.top + cr.height / 2;
+    const pg = pages.find(({ b }) => cx >= b.left && cx <= b.right && cy >= b.top && cy <= b.bottom);
+    if (!pg || cr.height > pg.b.height * 0.08) continue;
+    rects.push({
+      p: Number(pg.el.dataset.page),
+      x: (cr.left - pg.b.left) / pg.b.width,
+      y: (cr.top - pg.b.top) / pg.b.height,
+      w: cr.width / pg.b.width,
+      h: cr.height / pg.b.height,
+    });
+    last = cr;
+  }
+  return { rects: mergeRects(rects), last };
+}
+
+/** One clean band per run of words on a line. Scanned pages carry a crooked text
+ * layer (words a few pixels up or down, boxes overlapping the next line), so
+ * the words are grouped into lines by their middles first, joined left to
+ * right, and each band sits at its words' average height, not their union. */
+function mergeRects(rects: Rect[]): Rect[] {
+  const mid = (r: Rect) => r.y + r.h / 2;
+  const sorted = [...rects].sort((a, b) => a.p - b.p || mid(a) - mid(b));
+  const lines: Rect[][] = [];
+  for (const r of sorted) {
+    const line = lines.at(-1);
+    const centre = line && line.reduce((s, x) => s + mid(x), 0) / line.length;
+    const h = line && Math.min(r.h, line.reduce((s, x) => s + x.h, 0) / line.length);
+    if (line && line[0].p === r.p && Math.abs(mid(r) - centre!) < h! * 0.5) line.push(r);
+    else lines.push([r]);
+  }
+  const out: Rect[] = [];
+  for (const line of lines) {
+    line.sort((a, b) => a.x - b.x);
+    let run: Rect[] = [];
+    const flush = () => {
+      if (!run.length) return;
+      const weight = run.reduce((s, r) => s + r.w, 0) || 1;
+      const y = run.reduce((s, r) => s + r.y * r.w, 0) / weight;
+      const bottom = run.reduce((s, r) => s + (r.y + r.h) * r.w, 0) / weight;
+      const x = run[0].x;
+      const right = Math.max(...run.map((r) => r.x + r.w));
+      out.push({ p: run[0].p, x, y, w: right - x, h: bottom - y });
+      run = [];
+    };
+    for (const r of line) {
+      const right = run.length ? Math.max(...run.map((x) => x.x + x.w)) : 0;
+      if (run.length && r.x > right + 0.012) flush();
+      run.push(r);
+    }
+    flush();
+  }
+  return out;
+}
+
+interface Caret {
+  node: Node;
+  offset: number;
+}
+
+function caretFromPoint(x: number, y: number): Caret | null {
+  const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+  const p = d.caretPositionFromPoint?.(x, y);
+  if (p) return { node: p.offsetNode, offset: p.offset };
+  const r = d.caretRangeFromPoint?.(x, y);
+  return r ? { node: r.startContainer, offset: r.startOffset } : null;
+}
+
+/** The place in the text nearest a point: inside the word under it, or at the
+ * near end of the closest word, on the same line before any other. */
+function caretNear(root: HTMLElement, x: number, y: number): Caret | null {
+  let page: HTMLElement | null = null;
+  let gap = Infinity;
+  for (const el of root.querySelectorAll<HTMLElement>('.pdf-page')) {
+    const b = el.getBoundingClientRect();
+    const d = y < b.top ? b.top - y : y > b.bottom ? y - b.bottom : 0;
+    if (d < gap) [gap, page] = [d, el];
+    if (!d) break;
+  }
+  if (!page) return null;
+  let best: { t: Text; r: DOMRect } | null = null;
+  let score = Infinity;
+  for (const span of page.querySelectorAll<HTMLElement>('.textLayer span:not(.markedContent)')) {
+    const t = span.firstChild;
+    if (t?.nodeType !== Node.TEXT_NODE || !(t as Text).data.trim()) continue;
+    const r = span.getBoundingClientRect();
+    const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+    const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+    const s = dx + dy * 4 + Math.abs(y - (r.top + r.bottom) / 2) * 0.5;
+    if (s < score) [score, best] = [s, { t: t as Text, r }];
+  }
+  if (!best) return null;
+  const { t, r } = best;
+  if (x <= r.left) return { node: t, offset: 0 };
+  if (x >= r.right) return { node: t, offset: t.length };
+  const hit = caretFromPoint(x, (r.top + r.bottom) / 2);
+  if (hit?.node === t) return hit;
+  return { node: t, offset: Math.round(((x - r.left) / r.width) * t.length) };
+}
+
+function selectWord(sel: Selection, c: Caret) {
+  const t = c.node as Text;
+  const word = /[\p{L}\p{N}'’_-]/u;
+  let a = c.offset;
+  let b = c.offset;
+  while (a > 0 && word.test(t.data[a - 1])) a--;
+  while (b < t.length && word.test(t.data[b])) b++;
+  if (a === b) b = Math.min(t.length, a + 1);
+  sel.setBaseAndExtent(t, a, t, b);
+}
+
+/** The line as pdf.js gave it: the words between two line ends. */
+function selectLine(sel: Selection, c: Caret) {
+  const span = c.node.parentElement!;
+  const items = [...span.closest('.textLayer')!.querySelectorAll('span:not(.markedContent), br')];
+  let a = items.indexOf(span);
+  let b = a;
+  while (a > 0 && items[a - 1].tagName !== 'BR') a--;
+  while (b < items.length - 1 && items[b + 1].tagName !== 'BR') b++;
+  const end = items[b].firstChild ?? items[b];
+  sel.setBaseAndExtent(items[a].firstChild ?? items[a], 0, end, end.textContent?.length ?? 0);
 }
 
 /** One margin marker per note: at the first line it covers on this page. */
@@ -151,6 +316,107 @@ export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onP
     return m;
   }, [highlights]);
 
+  // The selection, drawn as the bands it will be saved as (the browser's own,
+  // over a scan's crooked text layer, is a jumble of overlapping boxes).
+  const [live, setLive] = useState<Rect[]>([]);
+  useEffect(() => {
+    const root = box.current;
+    if (!root) return;
+    let frame = 0;
+    const onChange = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const sel = document.getSelection();
+        const range = sel && !sel.isCollapsed && sel.rangeCount ? sel.getRangeAt(0) : null;
+        if (!range || !range.intersectsNode(root)) setLive((v) => (v.length ? [] : v));
+        else setLive(selectionBoxes(range, root).rects);
+      });
+    };
+    document.addEventListener('selectionchange', onChange);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener('selectionchange', onChange);
+    };
+  }, []);
+
+  // Selecting by dragging is done here, not by the browser. A scan's text layer
+  // is crooked (words a few pixels up or down, gaps between them, boxes over
+  // the next line), and the browser's own selection drops or jumps to the end
+  // of the page whenever the pointer is over a gap. Here the pointer always
+  // takes the nearest word: in a margin, between words, between lines.
+  useEffect(() => {
+    const root = box.current;
+    const scroller = root?.closest<HTMLElement>('.r-doc');
+    if (!root || !scroller) return;
+    const sel = () => window.getSelection()!;
+    let drag: { anchor: Caret; x: number; y: number; moved: boolean } | null = null;
+    let at = { x: 0, y: 0 };
+    let raf = 0;
+    const extend = () => {
+      const c = drag && caretNear(root, at.x, at.y);
+      if (drag && c) sel().setBaseAndExtent(drag.anchor.node, drag.anchor.offset, c.node, c.offset);
+    };
+    // Near the top or bottom edge, the page scrolls on under the pointer.
+    const scroll = () => {
+      raf = 0;
+      if (!drag?.moved) return;
+      const b = scroller.getBoundingClientRect();
+      const v = at.y < b.top + 40 ? at.y - b.top - 40 : at.y > b.bottom - 40 ? at.y - b.bottom + 40 : 0;
+      if (!v) return;
+      scroller.scrollTop += Math.max(-40, Math.min(40, v * 0.5));
+      extend();
+      raf = requestAnimationFrame(scroll);
+    };
+    const onMove = (e: MouseEvent) => {
+      if (!drag) return;
+      at = { x: e.clientX, y: e.clientY };
+      if (!drag.moved && Math.hypot(at.x - drag.x, at.y - drag.y) < 3) return;
+      drag.moved = true;
+      extend();
+      if (!raf) raf = requestAnimationFrame(scroll);
+    };
+    const onUp = () => {
+      drag = null;
+      cancelAnimationFrame(raf);
+      raf = 0;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp, true);
+    };
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.button !== 0 || !t.closest('.pdf-page') || t.closest('button, a, input, textarea')) return;
+      const c = caretNear(root, e.clientX, e.clientY);
+      if (!c) return;
+      e.preventDefault();
+      // Nothing gets focus from the click, so let go of a note being typed.
+      (document.activeElement as HTMLElement | null)?.blur?.();
+      const s = sel();
+      if (e.detail === 2) return selectWord(s, c);
+      if (e.detail >= 3) return selectLine(s, c);
+      at = { x: e.clientX, y: e.clientY };
+      if (e.shiftKey && s.anchorNode && root.contains(s.anchorNode)) {
+        drag = { anchor: { node: s.anchorNode, offset: s.anchorOffset }, x: at.x, y: at.y, moved: true };
+        extend();
+      } else {
+        s.removeAllRanges();
+        drag = { anchor: c, x: at.x, y: at.y, moved: false };
+      }
+      window.addEventListener('mousemove', onMove);
+      // Capturing, so it runs before the mouse-up below reads the selection.
+      window.addEventListener('mouseup', onUp, true);
+    };
+    root.addEventListener('mousedown', onDown);
+    return () => {
+      onUp();
+      root.removeEventListener('mousedown', onDown);
+    };
+  }, []);
+  const liveByPage = useMemo(() => {
+    const m = new Map<number, Rect[]>();
+    for (const r of live) m.set(r.p, [...(m.get(r.p) ?? []), r]);
+    return m;
+  }, [live]);
+
   const onMouseUp = useCallback(
     (e: React.MouseEvent) => {
       const sel = window.getSelection();
@@ -172,29 +438,9 @@ export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onP
       if (!box.current?.contains(range.commonAncestorContainer)) return;
       const text = rangeText(range);
       if (text.length < 2) return;
-      const pages = [...box.current.querySelectorAll<HTMLElement>('.pdf-page')].map((el) => ({
-        el,
-        b: el.getBoundingClientRect(),
-      }));
-      const rects: Rect[] = [];
-      let last: DOMRect | null = null;
-      for (const cr of range.getClientRects()) {
-        if (cr.width < 1 || cr.height < 1) continue;
-        const cx = cr.left + cr.width / 2;
-        const cy = cr.top + cr.height / 2;
-        const pg = pages.find(({ b }) => cx >= b.left && cx <= b.right && cy >= b.top && cy <= b.bottom);
-        if (!pg || cr.height > pg.b.height * 0.08) continue;
-        rects.push({
-          p: Number(pg.el.dataset.page),
-          x: (cr.left - pg.b.left) / pg.b.width,
-          y: (cr.top - pg.b.top) / pg.b.height,
-          w: cr.width / pg.b.width,
-          h: cr.height / pg.b.height,
-        });
-        last = cr;
-      }
+      const { rects, last } = selectionBoxes(range, box.current);
       if (!rects.length || !last) return;
-      setPending({ text, rects: mergeRects(rects), x: last.right + 8, y: last.bottom + 6 });
+      setPending({ text, rects, x: last.right + 8, y: last.bottom + 6 });
     },
     [byPage, editable, onPick],
   );
@@ -223,6 +469,7 @@ export function PdfDoc({ url, highlights, active, zoom, fit, editable, jump, onP
               width={pageWidth}
               base={s}
               marks={byPage.get(i) ?? []}
+              selected={liveByPage.get(i)}
               active={active}
               onPick={onPick}
             />
@@ -251,11 +498,12 @@ interface PageProps {
   width: number;
   base: { w: number; h: number };
   marks: { h: Highlight; r: Rect }[];
+  selected?: Rect[];
   active: string | null;
   onPick: Props['onPick'];
 }
 
-function PdfPage({ doc, index, width, base, marks, active, onPick }: PageProps) {
+function PdfPage({ doc, index, width, base, marks, selected, active, onPick }: PageProps) {
   const el = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
@@ -295,9 +543,6 @@ function PdfPage({ doc, index, width, base, marks, active, onPick }: PageProps) 
       layer = tl;
       try {
         await Promise.all([render.promise, tl.render()]);
-        const end = document.createElement('div');
-        end.className = 'endOfContent';
-        text.current?.append(end);
       } catch {
         // cancelled
       }
@@ -328,12 +573,14 @@ function PdfPage({ doc, index, width, base, marks, active, onPick }: PageProps) 
             ))}
         </div>
       ))}
-      <div
-        className="textLayer"
-        ref={text}
-        onMouseDown={() => text.current?.classList.add('selecting')}
-        onMouseUp={() => text.current?.classList.remove('selecting')}
-      />
+      {selected && (
+        <div className="sel-layer">
+          {selected.map((r, k) => (
+            <div key={k} style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }} />
+          ))}
+        </div>
+      )}
+      <div className="textLayer" ref={text} />
       <div className="margin-notes">
         {firstOnPage(marks).map(({ h, r }) => (
           <button

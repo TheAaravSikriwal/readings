@@ -56,6 +56,11 @@ anything. You can also drop a PDF or paste a link anywhere: it opens the same fo
 
 After any mark the box opens ready to type: Enter finishes, so you rarely need the mouse.
 
+Selecting in a PDF always takes the nearest word, so a drag can start in the margin or cross the
+gaps between words and lines without jumping, even on a scan whose text sits crooked. Double-click
+takes a word, triple-click a line, and Shift-click extends. The selection shows as the bands it will
+be saved as, and a word broken over a line end ("sub-" / "stituted") is saved whole.
+
 Every definition goes into the **glossary** on the map (bottom left): one entry per term
 across all your readings. The same term spelled differently (case, plural) is still one entry;
 different definitions of it are listed under it with where each came from.
